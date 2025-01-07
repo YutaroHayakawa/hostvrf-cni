@@ -1,0 +1,26 @@
+{
+	"cniVersion": "1.0.0",
+	"name": "hostvrf",
+	"plugins": [
+		{
+			"type": "hostvrf",
+			"vrfName": "vrf0",
+			"vrfTable": 100,
+			"loopbackAddressV4": "169.254.0.1",
+			"ipam": {
+				"type": "static",
+				"addresses": [
+					{"address": "10.0.0.1/24"}
+				],
+				"routes": [
+					{"dst": "0.0.0.0/0"}
+				],
+				"dns": {
+					"nameservers" : ["10.1.1.1"],
+					"domain": "example.com",
+					"search": [ "example.com" ]
+				}
+			}
+		}
+	]
+}

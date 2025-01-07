@@ -1,0 +1,51 @@
+{
+	"cniVersion": "1.0.0",
+	"interfaces": [
+		{
+			"mac": "00:00:00:00:00:00",
+			"name": "vrf0"
+		},
+		{
+			"mac": "00:00:00:00:00:00",
+			"name": "veth00000000"
+		},
+		{
+			"mac": "00:00:00:00:00:00",
+			"name": "eth0",
+			"sandbox": "/var/run/netns/testing"
+		}
+	],
+	"ips": [
+		{
+			"address": "10.0.0.1/32",
+			"interface": 2
+		},
+		{
+			"address": "fc00::1/128",
+			"interface": 2
+		}
+	],
+	"routes": [
+		{
+			"dst": "169.254.0.1/32",
+			"scope": 253
+		},
+		{
+			"dst": "fd00::1/128",
+			"scope": 253
+		},
+		{
+			"dst": "0.0.0.0/0",
+			"gw": "169.254.0.1"
+		},
+		{
+			"dst": "::/0",
+			"gw": "fd00::1"
+		}
+	],
+	"dns": {
+		"nameservers" : ["10.1.1.1", "fd00:1111::1111"],
+		"domain": "example.com",
+		"search": [ "example.com" ]
+	}
+}
