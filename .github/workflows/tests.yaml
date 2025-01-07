@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install kernel module
+      run: |
+        sudo apt install -y linux-modules-extra-$(uname -r)
+        sudo modprobe vrf
+        sudo lsmod
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ./go.mod
+
+    - name: Run tests
+      run: ./test.sh
