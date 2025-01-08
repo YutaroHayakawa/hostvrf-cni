@@ -200,25 +200,34 @@ func ensureLoopbackAddresses(n *NetConf, vrf *netlink.Vrf) error {
 	return nil
 }
 
-// ensureBlackholeRoutes inserts blackhole routes to the VRF device.
-// This route is used to isolate the traffic from the VRF device to
-// the outside world by default. In Linux, VRF is implemented as an
-// IP rule which is evaluated earlier than main routing table. Thus,
-// without this blackhole route, the routing lookup falls through
-// to the main table and packets hits the routing entries there.
+// ensureUnreachableDefaultRoutes inserts unreachable routes to the VRF device.
+// This route is used to isolate the traffic from the VRF device to the outside
+// world by default. In Linux, VRF is implemented as an IP rule which is
+// evaluated earlier than main routing table. Thus, without this unreachable
+// route, the routing lookup falls through to the main table and packets hits
+// the routing entries there.
 //
 // If users wish to direct traffic to other VRFs, they can "leak" the routes
 // from other VRFs. They can even override the default route by inserting the
-// default route with the priority higher than 100.
-func ensureBlackholeRoutes(n *NetConf, vrf *netlink.Vrf) error {
+// default route with the priority (metric) lower than 4278198272.
+//
+// This weird priority value is chosen intentionally based on the FRR's
+// implementation. FRR interprets the upper 1 byte as an Administrative
+// Distance value and lower 3 bytes as an actual metric. In our case, AD is
+// 255. This is a special AD value which will never win the best path
+// selection. Please see FRR and Linux VRF's document for more details.
+//
+// FRR: https://docs.frrouting.org/en/latest/zebra.html#administrative-distance
+// Linux VRF: https://www.kernel.org/doc/Documentation/networking/vrf.txt
+func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
 	if n.hasV4() {
 		if err := netlink.RouteReplace(&netlink.Route{
 			Dst: &net.IPNet{
 				IP:   net.IPv4zero,
 				Mask: net.CIDRMask(0, 32),
 			},
-			Type:     unix.RTN_BLACKHOLE,
-			Priority: 100,
+			Type:     unix.RTN_UNREACHABLE,
+			Priority: 4278198272,
 			Table:    int(vrf.Table),
 		}); err != nil {
 			return err
@@ -231,8 +240,8 @@ func ensureBlackholeRoutes(n *NetConf, vrf *netlink.Vrf) error {
 				IP:   net.IPv6unspecified,
 				Mask: net.CIDRMask(0, 128),
 			},
-			Type:     unix.RTN_BLACKHOLE,
-			Priority: 100,
+			Type:     unix.RTN_UNREACHABLE,
+			Priority: 4278198272,
 			Table:    int(vrf.Table),
 		}); err != nil {
 			return err
@@ -254,9 +263,9 @@ func setupVRF(n *NetConf) (*netlink.Vrf, *current.Interface, error) {
 		return nil, nil, fmt.Errorf("failed to assign loopback addresses to VRF: %w", err)
 	}
 
-	// insert blackhole default route for the isolation
-	if err := ensureBlackholeRoutes(n, vrf); err != nil {
-		return nil, nil, fmt.Errorf("failed to insert blackhole default routes to VRF: %w", err)
+	// insert unreachable default route for the isolation
+	if err := ensureUnreachableDefaultRoutes(n, vrf); err != nil {
+		return nil, nil, fmt.Errorf("failed to insert unreachable default routes to VRF: %w", err)
 	}
 
 	return vrf, &current.Interface{

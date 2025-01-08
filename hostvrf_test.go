@@ -634,17 +634,17 @@ func TestCNIAddDel(t *testing.T) {
 					require.NoError(t, err)
 				})
 
-				t.Run("Blackhole routes are configured", func(t *testing.T) {
+				t.Run("Unreachable routes are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
 						if netConf.LoopbackAddressV4 != "" {
 							rt, ok := vrfRoutes["0.0.0.0/0"]
-							require.True(t, ok, "Blackhole default route for IPv4 is not configured")
-							require.Equal(t, 100, rt.Priority, "Metric for the blackhole default route for IPv4 should be 100")
+							require.True(t, ok, "Unreachable default route for IPv4 is not configured")
+							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv4 must be 4278198272")
 						}
 						if netConf.LoopbackAddressV6 != "" {
 							rt, ok := vrfRoutes["::/0"]
-							require.True(t, ok, "Blackhole default route for IPv4 is not configured")
-							require.Equal(t, 100, rt.Priority, "Metric for the blackhole default route for IPv4 should be 100")
+							require.True(t, ok, "Unreachable default route for IPv6 is not configured")
+							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv6 must be 4278198272")
 						}
 						return nil
 					})
@@ -805,7 +805,7 @@ func TestCNIAddDel(t *testing.T) {
 							)
 							require.NoError(t, err)
 							require.Len(t, routes, 2, "Unexpected number of IPv4 routes are left")
-							require.Contains(t, routes, "0.0.0.0/0", "Blackhole default route is missing after DEL")
+							require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
 							require.Contains(t, routes, netConf.LoopbackAddressV4+"/32", "Loopback route is missing after DEL")
 						}
 						if netConf.LoopbackAddressV6 != "" {
@@ -823,7 +823,7 @@ func TestCNIAddDel(t *testing.T) {
 							)
 							require.NoError(t, err)
 							require.Len(t, routes, 2, "Unexpected number of IPv6 routes are left")
-							require.Contains(t, routes, "::/0", "Blackhole default route is missing after DEL")
+							require.Contains(t, routes, "::/0", "Unreachable default route is missing after DEL")
 							require.Contains(t, routes, netConf.LoopbackAddressV6+"/128", "Loopback route is missing after DEL")
 						}
 						return nil
