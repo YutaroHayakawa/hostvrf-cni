@@ -1,7 +1,10 @@
-#!/bin/sh
+#!/bin/bash
 
 docker build --tag localhost/hostvrf-tester:local .
 
-go build -o hostvrf
+pushd plugins/hostvrf
 
+go build
 go test -v -exec sudo
+
+popd
