@@ -5,7 +5,6 @@
 		{
 			"type": "hostvrf",
 			"vrfName": "vrf0",
-			"vrfTable": 100,
 			"loopbackAddressV4": "169.254.0.1",
 			"loopbackAddressV6": "fd00::1",
 			"ipam": {

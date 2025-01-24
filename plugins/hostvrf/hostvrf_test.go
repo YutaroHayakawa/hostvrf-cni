@@ -36,6 +36,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 )
 
 func marshalConf(t *testing.T, n *NetConf) []byte {
@@ -98,6 +99,18 @@ func TestLoadNetConf(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "valid missing vrfTable",
+			config: marshalConf(t, &NetConf{
+				NetConf: types.NetConf{
+					IPAM: types.IPAM{
+						Type: "foo",
+					},
+				},
+				VRFName:           "vrf0",
+				LoopbackAddressV4: "169.254.0.1",
+			}),
+		},
+		{
 			name: "invalid missing vrfName",
 			config: marshalConf(t, &NetConf{
 				NetConf: types.NetConf{
@@ -106,19 +119,6 @@ func TestLoadNetConf(t *testing.T) {
 					},
 				},
 				VRFTable:          100,
-				LoopbackAddressV4: "169.254.0.1",
-			}),
-			expectError: true,
-		},
-		{
-			name: "invalid missing vrfTable",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
-						Type: "foo",
-					},
-				},
-				VRFName:           "vrf0",
 				LoopbackAddressV4: "169.254.0.1",
 			}),
 			expectError: true,
@@ -469,6 +469,24 @@ func TestCNIAddDel(t *testing.T) {
 			err = c.Copy(ctx, "hostvrf.conflist", netConfFile, "/etc/cni/net.d")
 			require.NoError(t, err)
 
+			if netConf.VRFTable == 0 {
+				// Insert some random route to "use" table 256
+				// (the first available table) to test the
+				// table allocation logic. We expect 257 to be
+				// allocated.
+				err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
+					return netlink.RouteAdd(&netlink.Route{
+						Dst: &net.IPNet{
+							IP:   net.IPv4zero,
+							Mask: net.CIDRMask(0, 32),
+						},
+						Type:  unix.RTN_UNREACHABLE,
+						Table: 256,
+					})
+				})
+				require.NoError(t, err)
+			}
+
 			var addResult current.Result
 
 			t.Run("ADD", func(t *testing.T) {
@@ -499,7 +517,11 @@ func TestCNIAddDel(t *testing.T) {
 						require.NoError(t, err, "VRF is missing")
 						require.True(t, vrfLink.Attrs().Flags&net.FlagUp > 0, "VRF is not up")
 						vrf = vrfLink.(*netlink.Vrf)
-						require.Equal(t, netConf.VRFTable, vrf.Table, "Unexpected VRF TableID")
+						if netConf.VRFTable != 0 {
+							require.Equal(t, netConf.VRFTable, vrf.Table, "Unexpected VRF TableID")
+						} else {
+							require.Equal(t, uint32(257), vrf.Table, "Unexpected allocated VRF TableID")
+						}
 						return nil
 					})
 					require.NoError(t, err)
@@ -790,12 +812,17 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("No direct route to the containers are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
+						table := netConf.VRFTable
+						if table == 0 {
+							// Dynamic allocation case
+							table = 257
+						}
 						if netConf.LoopbackAddressV4 != "" {
 							routes := map[string]netlink.Route{}
 							err := netlink.RouteListFilteredIter(
 								netlink.FAMILY_V4,
 								&netlink.Route{
-									Table: int(netConf.VRFTable),
+									Table: int(table),
 								},
 								netlink.RT_FILTER_TABLE,
 								func(rt netlink.Route) bool {
@@ -813,7 +840,7 @@ func TestCNIAddDel(t *testing.T) {
 							err := netlink.RouteListFilteredIter(
 								netlink.FAMILY_V6,
 								&netlink.Route{
-									Table: int(netConf.VRFTable),
+									Table: int(table),
 								},
 								netlink.RT_FILTER_TABLE,
 								func(rt netlink.Route) bool {

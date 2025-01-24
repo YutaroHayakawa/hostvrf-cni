@@ -17,6 +17,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"runtime"
 
@@ -72,8 +73,8 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 		return nil, "", fmt.Errorf("IPAM plugin must be specified")
 	}
 
-	if n.VRFName == "" || n.VRFTable == 0 {
-		return nil, "", fmt.Errorf("vrfName and vrfTable are required")
+	if n.VRFName == "" {
+		return nil, "", fmt.Errorf("vrfName is required")
 	}
 
 	if n.LoopbackAddressV4 == "" && n.LoopbackAddressV6 == "" {
@@ -126,8 +127,54 @@ func getVRF(name string) (*netlink.Vrf, error) {
 	return vrf, nil
 }
 
-func addVRF(name string, table uint32) (*netlink.Vrf, error) {
-	err := netlink.LinkAdd(&netlink.Vrf{
+func hasRoute(table uint32) (bool, error) {
+	routes, err := netlink.RouteListFiltered(
+		netlink.FAMILY_ALL,
+		&netlink.Route{
+			Table: int(table),
+		},
+		netlink.RT_FILTER_TABLE,
+	)
+	if err != nil {
+		return false, err
+	}
+	return len(routes) > 0, nil
+}
+
+func findFreeTable(requestedTable uint32) (uint32, error) {
+	if requestedTable != 0 {
+		found, err := hasRoute(requestedTable)
+		if err != nil {
+			return 0, err
+		}
+		if found {
+			return 0, fmt.Errorf("requested table (ID: %d) is already in use", requestedTable)
+		}
+		return requestedTable, nil
+	}
+
+	// Table 255 is local table. There's no reserved table for >= 256.
+	// Therefore, we'll start from 256.
+	for i := uint32(256); i < math.MaxUint32; i++ {
+		found, err := hasRoute(uint32(i))
+		if err != nil {
+			return 0, err
+		}
+		if !found {
+			return i, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no available table found")
+}
+
+func addVRF(name string, requestedTable uint32) (*netlink.Vrf, error) {
+	table, err := findFreeTable(requestedTable)
+	if err != nil {
+		return nil, err
+	}
+
+	err = netlink.LinkAdd(&netlink.Vrf{
 		LinkAttrs: netlink.LinkAttrs{
 			Name: name,
 		},
@@ -150,7 +197,7 @@ func addVRF(name string, table uint32) (*netlink.Vrf, error) {
 	return vrf, nil
 }
 
-func ensureVRF(name string, table uint32) (*netlink.Vrf, error) {
+func ensureVRF(name string, requestedTable uint32) (*netlink.Vrf, error) {
 	var (
 		vrf *netlink.Vrf
 		err error
@@ -164,7 +211,7 @@ func ensureVRF(name string, table uint32) (*netlink.Vrf, error) {
 
 	// VRF is missing. Create a new one.
 	if vrf == nil && err == nil {
-		vrf, err = addVRF(name, table)
+		vrf, err = addVRF(name, requestedTable)
 		if err != nil {
 			return nil, err
 		}
