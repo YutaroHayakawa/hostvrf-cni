@@ -5,7 +5,7 @@ go 1.23.2
 require (
 	github.com/containernetworking/cni v1.2.3
 	github.com/containernetworking/plugins v1.6.2
-	github.com/docker/docker v27.5.0+incompatible
+	github.com/docker/docker v27.5.1+incompatible
 	github.com/stretchr/testify v1.10.0
 	github.com/vishvananda/netlink v1.3.0
 	golang.org/x/sys v0.29.0
