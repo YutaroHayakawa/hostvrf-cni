@@ -339,12 +339,27 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/proxy_arp", hostVeth.Name), "1"); err != nil {
 			return fmt.Errorf("failed to set proxy_arp: %w", err)
 		}
+
+		// Enable IPv4 forwarding
+		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/forwarding", hostVeth.Name), "1"); err != nil {
+			return fmt.Errorf("failed to set forwarding: %w", err)
+		}
 	}
 
 	if n.EnableIPv6 {
+		// Enable IPv6
+		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/disable_ipv6", hostVeth.Name), "0"); err != nil {
+			return fmt.Errorf("failed to enable ipv6: %w", err)
+		}
+
 		// setup proxy-ndp to the host interface
 		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/proxy_ndp", hostVeth.Name), "1"); err != nil {
 			return fmt.Errorf("failed to set proxy_ndp: %w", err)
+		}
+
+		// Enable IPv6 forwarding
+		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/forwarding", hostVeth.Name), "1"); err != nil {
+			return fmt.Errorf("failed to set forwarding: %w", err)
 		}
 
 		// For IPv6, we need to setup the neighbor entry for proxying

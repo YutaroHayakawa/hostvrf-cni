@@ -576,17 +576,29 @@ func TestCNIAddDel(t *testing.T) {
 					require.NoError(t, err)
 				})
 
-				t.Run("Proxy ARP/NDP are configured", func(t *testing.T) {
+				t.Run("Sysctls are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
 						if netConf.EnableIPv4 {
 							v, err := sysctl.Sysctl("net/ipv4/conf/" + hostVeth.Name + "/proxy_arp")
 							require.NoError(t, err)
 							require.Equal(t, "1", v, "Proxy ARP is not configured on the host side veth")
+
+							v, err = sysctl.Sysctl("net/ipv4/conf/" + hostVeth.Name + "/forwarding")
+							require.NoError(t, err)
+							require.Equal(t, "1", v, "IPv4 forwarding is not configured on the host side veth")
 						}
 						if netConf.EnableIPv6 {
 							v, err := sysctl.Sysctl("net/ipv6/conf/" + hostVeth.Name + "/proxy_ndp")
 							require.NoError(t, err)
 							require.Equal(t, "1", v, "Proxy NDP is not configured on the host side veth")
+
+							v, err = sysctl.Sysctl("net/ipv6/conf/" + hostVeth.Name + "/disable_ipv6")
+							require.NoError(t, err)
+							require.Equal(t, "0", v, "IPv6 is not enabled on the host side veth")
+
+							v, err = sysctl.Sysctl("net/ipv6/conf/" + hostVeth.Name + "/forwarding")
+							require.NoError(t, err)
+							require.Equal(t, "1", v, "IPv6 forwarding is not enabled on the host side veth")
 
 							neighbors, err := netlink.NeighProxyList(hostVeth.Index, netlink.FAMILY_V6)
 							require.NoError(t, err)
