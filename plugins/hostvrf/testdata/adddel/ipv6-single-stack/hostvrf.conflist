@@ -6,7 +6,7 @@
 			"type": "hostvrf",
 			"vrfName": "vrf0",
 			"vrfTable": 100,
-			"loopbackAddressV6": "fd00::1",
+			"dummyGatewayAddressV6": "fd00::1",
 			"ipam": {
 				"type": "static",
 				"addresses": [

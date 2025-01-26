@@ -38,22 +38,22 @@ import (
 type NetConf struct {
 	types.NetConf
 
-	VRFName           string `json:"vrfName"`
-	VRFTable          uint32 `json:"vrfTable"`
-	LoopbackAddressV4 string `json:"loopbackAddressV4,omitempty"`
-	LoopbackAddressV6 string `json:"loopbackAddressV6,omitempty"`
+	VRFName               string `json:"vrfName"`
+	VRFTable              uint32 `json:"vrfTable"`
+	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4,omitempty"`
+	DummyGatewayAddressV6 string `json:"dummyGatewayAddressV6,omitempty"`
 
 	// Private fields used internally. Filled at the load time.
-	loopbackAddressV4 net.IP `json:"-"`
-	loopbackAddressV6 net.IP `json:"-"`
+	dummyGatewayAddressV4 net.IP `json:"-"`
+	dummyGatewayAddressV6 net.IP `json:"-"`
 }
 
 func (n *NetConf) hasV4() bool {
-	return n.loopbackAddressV4 != nil
+	return n.dummyGatewayAddressV4 != nil
 }
 
 func (n *NetConf) hasV6() bool {
-	return n.loopbackAddressV6 != nil
+	return n.dummyGatewayAddressV6 != nil
 }
 
 func init() {
@@ -77,34 +77,34 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 		return nil, "", fmt.Errorf("vrfName is required")
 	}
 
-	if n.LoopbackAddressV4 == "" && n.LoopbackAddressV6 == "" {
-		return nil, "", fmt.Errorf("either loopbackAddressV4 or loopbackAddressV6 must be specified")
+	if n.DummyGatewayAddressV4 == "" && n.DummyGatewayAddressV6 == "" {
+		return nil, "", fmt.Errorf("either dummyGatewayAddressV4 or dummyGatewayAddressV6 must be specified")
 	}
 
-	if n.LoopbackAddressV4 != "" {
-		loopbackAddressV4 := net.ParseIP(n.LoopbackAddressV4)
-		if loopbackAddressV4 == nil {
-			return nil, "", fmt.Errorf("failed to parse IPv4 loopback address %q", n.LoopbackAddressV4)
+	if n.DummyGatewayAddressV4 != "" {
+		dummyGatewayAddressV4 := net.ParseIP(n.DummyGatewayAddressV4)
+		if dummyGatewayAddressV4 == nil {
+			return nil, "", fmt.Errorf("failed to parse IPv4 dummy gateway address %q", n.DummyGatewayAddressV4)
 		}
 
-		if loopbackAddressV4.To4() == nil {
-			return nil, "", fmt.Errorf("loopbackAddressV4 must be an IPv4 address")
+		if dummyGatewayAddressV4.To4() == nil {
+			return nil, "", fmt.Errorf("dummyGatewayAddressV4 must be an IPv4 address")
 		}
 
-		n.loopbackAddressV4 = loopbackAddressV4
+		n.dummyGatewayAddressV4 = dummyGatewayAddressV4
 	}
 
-	if n.LoopbackAddressV6 != "" {
-		loopbackAddressV6 := net.ParseIP(n.LoopbackAddressV6)
-		if loopbackAddressV6 == nil {
-			return nil, "", fmt.Errorf("failed to parse IPv6 loopback address %q", n.LoopbackAddressV6)
+	if n.DummyGatewayAddressV6 != "" {
+		dummyGatewayAddressV6 := net.ParseIP(n.DummyGatewayAddressV6)
+		if dummyGatewayAddressV6 == nil {
+			return nil, "", fmt.Errorf("failed to parse IPv6 dummy gateway address %q", n.DummyGatewayAddressV6)
 		}
 
-		if loopbackAddressV6.To4() != nil {
-			return nil, "", fmt.Errorf("loopbackAddressV6 must be an IPv6 address")
+		if dummyGatewayAddressV6.To4() != nil {
+			return nil, "", fmt.Errorf("dummyGatewayAddressV6 must be an IPv6 address")
 		}
 
-		n.loopbackAddressV6 = loopbackAddressV6
+		n.dummyGatewayAddressV6 = dummyGatewayAddressV6
 	}
 
 	return n, n.CNIVersion, nil
@@ -353,7 +353,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 			LinkIndex:   hostVeth.Index,
 			Family:      netlink.FAMILY_V6,
 			State:       netlink.NUD_PERMANENT,
-			IP:          n.loopbackAddressV6,
+			IP:          n.dummyGatewayAddressV6,
 			Flags:       netlink.NTF_PROXY,
 			MasterIndex: vrf.Index,
 		}); err != nil {
@@ -412,44 +412,44 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.In
 		ip.Gateway = nil
 	}
 
-	// All routes should have loopback address as a nexthop. Override the GW field.
+	// All routes should have dummy gateway address as a nexthop. Override the GW field.
 	for _, route := range result.Routes {
 		switch {
 		case route.Dst.IP.To4() != nil && n.hasV4():
-			route.GW = n.loopbackAddressV4
+			route.GW = n.dummyGatewayAddressV4
 		case route.Dst.IP.To4() == nil && n.hasV6():
-			route.GW = n.loopbackAddressV6
+			route.GW = n.dummyGatewayAddressV6
 		default:
 			return fmt.Errorf("route %s doesn't have a suitable gateway address", route.Dst.String())
 		}
 	}
 
-	// Insert a link-scoped route to the VRF's loopback address. We insert
+	// Insert a link-scoped route to the dummy gateway address. We insert
 	// this into the beginning of the result.Routes slice because rest of
-	// the routes uses the loopback address as a gateway, so the route
+	// the routes uses the dummy gateway address as a gateway, so the route
 	// should be present before the other routes.
-	loopbackRoutes := []*types.Route{}
+	dummyGatewayRoutes := []*types.Route{}
 	if n.hasV4() {
 		rt := &types.Route{
 			Dst: net.IPNet{
-				IP:   n.loopbackAddressV4,
+				IP:   n.dummyGatewayAddressV4,
 				Mask: net.CIDRMask(32, 32),
 			},
 			Scope: current.Int(int(netlink.SCOPE_LINK)),
 		}
-		loopbackRoutes = append(loopbackRoutes, rt)
+		dummyGatewayRoutes = append(dummyGatewayRoutes, rt)
 	}
 	if n.hasV6() {
 		rt := &types.Route{
 			Dst: net.IPNet{
-				IP:   n.loopbackAddressV6,
+				IP:   n.dummyGatewayAddressV6,
 				Mask: net.CIDRMask(128, 128),
 			},
 			Scope: current.Int(int(netlink.SCOPE_LINK)),
 		}
-		loopbackRoutes = append(loopbackRoutes, rt)
+		dummyGatewayRoutes = append(dummyGatewayRoutes, rt)
 	}
-	result.Routes = append(loopbackRoutes, result.Routes...)
+	result.Routes = append(dummyGatewayRoutes, result.Routes...)
 
 	return netns.Do(func(_ ns.NetNS) error {
 		return ipam.ConfigureIface(containerInterface.Name, result)

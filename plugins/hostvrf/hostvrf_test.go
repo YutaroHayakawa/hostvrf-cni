@@ -63,38 +63,38 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFName:           "vrf0",
-				VRFTable:          100,
-				LoopbackAddressV4: "169.254.0.1",
-				LoopbackAddressV6: "fd00::1",
+				VRFName:               "vrf0",
+				VRFTable:              100,
+				DummyGatewayAddressV4: "169.254.0.1",
+				DummyGatewayAddressV6: "fd00::1",
 			}),
 			expectError: false,
 		},
 		{
-			name: "valid missing loopbackAddressV4",
+			name: "valid missing dummyGatewayAddressV4",
 			config: marshalConf(t, &NetConf{
 				NetConf: types.NetConf{
 					IPAM: types.IPAM{
 						Type: "foo",
 					},
 				},
-				VRFName:           "vrf0",
-				VRFTable:          100,
-				LoopbackAddressV6: "fd00::1",
+				VRFName:               "vrf0",
+				VRFTable:              100,
+				DummyGatewayAddressV6: "fd00::1",
 			}),
 			expectError: false,
 		},
 		{
-			name: "valid missing loopbackAddressV6",
+			name: "valid missing dummyGatewayAddressV6",
 			config: marshalConf(t, &NetConf{
 				NetConf: types.NetConf{
 					IPAM: types.IPAM{
 						Type: "foo",
 					},
 				},
-				VRFName:           "vrf0",
-				VRFTable:          100,
-				LoopbackAddressV4: "169.254.0.1",
+				VRFName:               "vrf0",
+				VRFTable:              100,
+				DummyGatewayAddressV4: "169.254.0.1",
 			}),
 			expectError: false,
 		},
@@ -106,8 +106,8 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFName:           "vrf0",
-				LoopbackAddressV4: "169.254.0.1",
+				VRFName:               "vrf0",
+				DummyGatewayAddressV4: "169.254.0.1",
 			}),
 		},
 		{
@@ -118,13 +118,13 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFTable:          100,
-				LoopbackAddressV4: "169.254.0.1",
+				VRFTable:              100,
+				DummyGatewayAddressV4: "169.254.0.1",
 			}),
 			expectError: true,
 		},
 		{
-			name: "invalid missing loopbackAddressV4 and V6",
+			name: "invalid missing dummyGatewayAddressV4 and V6",
 			config: marshalConf(t, &NetConf{
 				NetConf: types.NetConf{
 					IPAM: types.IPAM{
@@ -139,9 +139,9 @@ func TestLoadNetConf(t *testing.T) {
 		{
 			name: "invalid missing IPAM config",
 			config: marshalConf(t, &NetConf{
-				VRFName:           "vrf0",
-				VRFTable:          100,
-				LoopbackAddressV4: "169.254.0.1",
+				VRFName:               "vrf0",
+				VRFTable:              100,
+				DummyGatewayAddressV4: "169.254.0.1",
 			}),
 			expectError: true,
 		},
@@ -160,10 +160,10 @@ func TestLoadNetConf(t *testing.T) {
 }
 
 type testNetConf struct {
-	VRFName           string `json:"vrfName"`
-	VRFTable          uint32 `json:"vrfTable"`
-	LoopbackAddressV4 string `json:"loopbackAddressV4,omitempty"`
-	LoopbackAddressV6 string `json:"loopbackAddressV6,omitempty"`
+	VRFName               string `json:"vrfName"`
+	VRFTable              uint32 `json:"vrfTable"`
+	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4,omitempty"`
+	DummyGatewayAddressV6 string `json:"dummyGatewayAddressV6,omitempty"`
 
 	IPAM testIPAMConf
 }
@@ -554,12 +554,12 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("Proxy ARP/NDP are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-						if netConf.LoopbackAddressV4 != "" {
+						if netConf.DummyGatewayAddressV4 != "" {
 							v, err := sysctl.Sysctl("net/ipv4/conf/" + hostVeth.Name + "/proxy_arp")
 							require.NoError(t, err)
 							require.Equal(t, "1", v, "Proxy ARP is not configured on the host side veth")
 						}
-						if netConf.LoopbackAddressV6 != "" {
+						if netConf.DummyGatewayAddressV6 != "" {
 							v, err := sysctl.Sysctl("net/ipv6/conf/" + hostVeth.Name + "/proxy_ndp")
 							require.NoError(t, err)
 							require.Equal(t, "1", v, "Proxy NDP is not configured on the host side veth")
@@ -568,7 +568,7 @@ func TestCNIAddDel(t *testing.T) {
 							require.NoError(t, err)
 							require.Len(t, neighbors, 1, "Proxy NDP neighbor entry is missing")
 
-							expected := net.ParseIP(netConf.LoopbackAddressV6)
+							expected := net.ParseIP(netConf.DummyGatewayAddressV6)
 							require.NotNil(t, expected)
 							require.True(t, neighbors[0].IP.Equal(expected), "Proxy NDP is set for the wrong IP: %s", neighbors[0].IP.String())
 						}
@@ -633,12 +633,12 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("Unreachable routes are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-						if netConf.LoopbackAddressV4 != "" {
+						if netConf.DummyGatewayAddressV4 != "" {
 							rt, ok := vrfRoutes["0.0.0.0/0"]
 							require.True(t, ok, "Unreachable default route for IPv4 is not configured")
 							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv4 must be 4278198272")
 						}
-						if netConf.LoopbackAddressV6 != "" {
+						if netConf.DummyGatewayAddressV6 != "" {
 							rt, ok := vrfRoutes["::/0"]
 							require.True(t, ok, "Unreachable default route for IPv6 is not configured")
 							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv6 must be 4278198272")
@@ -706,11 +706,11 @@ func TestCNIAddDel(t *testing.T) {
 				t.Run("Container routes are instantiated", func(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
 						var v4NH, v6NH net.IP
-						if netConf.LoopbackAddressV4 != "" {
-							v4NH = net.ParseIP(netConf.LoopbackAddressV4)
+						if netConf.DummyGatewayAddressV4 != "" {
+							v4NH = net.ParseIP(netConf.DummyGatewayAddressV4)
 						}
-						if netConf.LoopbackAddressV6 != "" {
-							v6NH = net.ParseIP(netConf.LoopbackAddressV6)
+						if netConf.DummyGatewayAddressV6 != "" {
+							v6NH = net.ParseIP(netConf.DummyGatewayAddressV6)
 						}
 
 						for _, route := range netConf.IPAM.Routes {
@@ -733,19 +733,19 @@ func TestCNIAddDel(t *testing.T) {
 					})
 				})
 
-				t.Run("Route to the loopback addresses are instantiated", func(t *testing.T) {
+				t.Run("Route to the dummy gateway addresses are instantiated", func(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
-						if netConf.LoopbackAddressV4 != "" {
-							rt, ok := containerRoutes[netConf.LoopbackAddressV4+"/32"]
-							require.True(t, ok, "IPv4 route to the loopback address is missing")
-							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv4 route to the loopback address is not bounded to the interface")
-							require.Nil(t, rt.Gw, "IPv4 route to the loopback address must not have a gateway")
+						if netConf.DummyGatewayAddressV4 != "" {
+							rt, ok := containerRoutes[netConf.DummyGatewayAddressV4+"/32"]
+							require.True(t, ok, "IPv4 route to the dummy gateway address is missing")
+							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv4 route to the dummy gateway address is not bounded to the interface")
+							require.Nil(t, rt.Gw, "IPv4 route to the dummy gateway address must not have a gateway")
 						}
-						if netConf.LoopbackAddressV6 != "" {
-							rt, ok := containerRoutes[netConf.LoopbackAddressV6+"/128"]
-							require.True(t, ok, "IPv6 route to the loopback address is missing")
-							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv6 route to the loopback address is not bounded to the interface")
-							require.Nil(t, rt.Gw, "IPv6 route to the loopback address must not have a gateway")
+						if netConf.DummyGatewayAddressV6 != "" {
+							rt, ok := containerRoutes[netConf.DummyGatewayAddressV6+"/128"]
+							require.True(t, ok, "IPv6 route to the dummy gateway address is missing")
+							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv6 route to the dummy gateway address is not bounded to the interface")
+							require.Nil(t, rt.Gw, "IPv6 route to the dummy gateway address must not have a gateway")
 						}
 						return nil
 					})
@@ -792,7 +792,7 @@ func TestCNIAddDel(t *testing.T) {
 							// Dynamic allocation case
 							table = 257
 						}
-						if netConf.LoopbackAddressV4 != "" {
+						if netConf.DummyGatewayAddressV4 != "" {
 							routes := map[string]netlink.Route{}
 							err := netlink.RouteListFilteredIter(
 								netlink.FAMILY_V4,
@@ -809,7 +809,7 @@ func TestCNIAddDel(t *testing.T) {
 							require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
 							require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
 						}
-						if netConf.LoopbackAddressV6 != "" {
+						if netConf.DummyGatewayAddressV6 != "" {
 							routes := map[string]netlink.Route{}
 							err := netlink.RouteListFilteredIter(
 								netlink.FAMILY_V6,
