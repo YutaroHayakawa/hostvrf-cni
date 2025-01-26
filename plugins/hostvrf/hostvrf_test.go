@@ -64,8 +64,38 @@ func TestLoadNetConf(t *testing.T) {
 				},
 				VRFName:               "vrf0",
 				VRFTable:              100,
+				EnableIPv4:            true,
+				EnableIPv6:            true,
 				DummyGatewayAddressV4: "169.254.0.1",
 				DummyGatewayAddressV6: "fd00::1",
+			}),
+			expectError: false,
+		},
+		{
+			name: "valid missing enableIPv4",
+			config: marshalConf(t, &NetConf{
+				NetConf: types.NetConf{
+					IPAM: types.IPAM{
+						Type: "foo",
+					},
+				},
+				VRFName:    "vrf0",
+				VRFTable:   100,
+				EnableIPv6: true,
+			}),
+			expectError: false,
+		},
+		{
+			name: "valid missing enableIPv6",
+			config: marshalConf(t, &NetConf{
+				NetConf: types.NetConf{
+					IPAM: types.IPAM{
+						Type: "foo",
+					},
+				},
+				VRFName:    "vrf0",
+				VRFTable:   100,
+				EnableIPv4: true,
 			}),
 			expectError: false,
 		},
@@ -79,6 +109,7 @@ func TestLoadNetConf(t *testing.T) {
 				},
 				VRFName:               "vrf0",
 				VRFTable:              100,
+				EnableIPv6:            true,
 				DummyGatewayAddressV6: "fd00::1",
 			}),
 			expectError: false,
@@ -93,7 +124,23 @@ func TestLoadNetConf(t *testing.T) {
 				},
 				VRFName:               "vrf0",
 				VRFTable:              100,
+				EnableIPv4:            true,
 				DummyGatewayAddressV4: "169.254.0.1",
+			}),
+			expectError: false,
+		},
+		{
+			name: "valid missing dummyGatewayAddressV4 and V6",
+			config: marshalConf(t, &NetConf{
+				NetConf: types.NetConf{
+					IPAM: types.IPAM{
+						Type: "foo",
+					},
+				},
+				VRFName:    "vrf0",
+				VRFTable:   100,
+				EnableIPv4: true,
+				EnableIPv6: true,
 			}),
 			expectError: false,
 		},
@@ -106,6 +153,7 @@ func TestLoadNetConf(t *testing.T) {
 					},
 				},
 				VRFName:               "vrf0",
+				EnableIPv4:            true,
 				DummyGatewayAddressV4: "169.254.0.1",
 			}),
 		},
@@ -118,25 +166,23 @@ func TestLoadNetConf(t *testing.T) {
 					},
 				},
 				VRFTable:              100,
+				EnableIPv4:            true,
 				DummyGatewayAddressV4: "169.254.0.1",
 			}),
 			expectError: true,
 		},
 		{
-			name: "invalid missing dummyGatewayAddressV4 and V6",
+			name: "invalid missing IPAM config",
 			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
-						Type: "foo",
-					},
-				},
-				VRFName:  "vrf0",
-				VRFTable: 100,
+				VRFName:               "vrf0",
+				VRFTable:              100,
+				EnableIPv4:            true,
+				DummyGatewayAddressV4: "169.254.0.1",
 			}),
 			expectError: true,
 		},
 		{
-			name: "invalid missing IPAM config",
+			name: "invalid missing enableIPv4 and enableIPv6",
 			config: marshalConf(t, &NetConf{
 				VRFName:               "vrf0",
 				VRFTable:              100,
@@ -532,12 +578,12 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("Proxy ARP/NDP are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-						if netConf.DummyGatewayAddressV4 != "" {
+						if netConf.EnableIPv4 {
 							v, err := sysctl.Sysctl("net/ipv4/conf/" + hostVeth.Name + "/proxy_arp")
 							require.NoError(t, err)
 							require.Equal(t, "1", v, "Proxy ARP is not configured on the host side veth")
 						}
-						if netConf.DummyGatewayAddressV6 != "" {
+						if netConf.EnableIPv6 {
 							v, err := sysctl.Sysctl("net/ipv6/conf/" + hostVeth.Name + "/proxy_ndp")
 							require.NoError(t, err)
 							require.Equal(t, "1", v, "Proxy NDP is not configured on the host side veth")
@@ -608,12 +654,12 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("Unreachable routes are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-						if netConf.DummyGatewayAddressV4 != "" {
+						if netConf.EnableIPv4 {
 							rt, ok := vrfRoutes["0.0.0.0/0"]
 							require.True(t, ok, "Unreachable default route for IPv4 is not configured")
 							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv4 must be 4278198272")
 						}
-						if netConf.DummyGatewayAddressV6 != "" {
+						if netConf.EnableIPv6 {
 							rt, ok := vrfRoutes["::/0"]
 							require.True(t, ok, "Unreachable default route for IPv6 is not configured")
 							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv6 must be 4278198272")
@@ -681,10 +727,10 @@ func TestCNIAddDel(t *testing.T) {
 				t.Run("Container routes are instantiated", func(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
 						var v4NH, v6NH net.IP
-						if netConf.DummyGatewayAddressV4 != "" {
+						if netConf.EnableIPv4 {
 							v4NH = net.ParseIP(netConf.DummyGatewayAddressV4)
 						}
-						if netConf.DummyGatewayAddressV6 != "" {
+						if netConf.EnableIPv6 {
 							v6NH = net.ParseIP(netConf.DummyGatewayAddressV6)
 						}
 
@@ -711,13 +757,13 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("Route to the dummy gateway addresses are instantiated", func(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
-						if netConf.DummyGatewayAddressV4 != "" {
+						if netConf.EnableIPv4 {
 							rt, ok := containerRoutes[netConf.DummyGatewayAddressV4+"/32"]
 							require.True(t, ok, "IPv4 route to the dummy gateway address is missing")
 							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv4 route to the dummy gateway address is not bounded to the interface")
 							require.Nil(t, rt.Gw, "IPv4 route to the dummy gateway address must not have a gateway")
 						}
-						if netConf.DummyGatewayAddressV6 != "" {
+						if netConf.EnableIPv6 {
 							rt, ok := containerRoutes[netConf.DummyGatewayAddressV6+"/128"]
 							require.True(t, ok, "IPv6 route to the dummy gateway address is missing")
 							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv6 route to the dummy gateway address is not bounded to the interface")
@@ -768,7 +814,7 @@ func TestCNIAddDel(t *testing.T) {
 							// Dynamic allocation case
 							table = 257
 						}
-						if netConf.DummyGatewayAddressV4 != "" {
+						if netConf.EnableIPv4 {
 							routes := map[string]netlink.Route{}
 							err := netlink.RouteListFilteredIter(
 								netlink.FAMILY_V4,
@@ -785,7 +831,7 @@ func TestCNIAddDel(t *testing.T) {
 							require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
 							require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
 						}
-						if netConf.DummyGatewayAddressV6 != "" {
+						if netConf.EnableIPv6 {
 							routes := map[string]netlink.Route{}
 							err := netlink.RouteListFilteredIter(
 								netlink.FAMILY_V6,

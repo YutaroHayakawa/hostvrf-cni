@@ -40,21 +40,20 @@ type NetConf struct {
 
 	VRFName               string `json:"vrfName"`
 	VRFTable              uint32 `json:"vrfTable"`
-	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4,omitempty"`
-	DummyGatewayAddressV6 string `json:"dummyGatewayAddressV6,omitempty"`
+	EnableIPv4            bool   `json:"enableIPv4"`
+	EnableIPv6            bool   `json:"enableIPv6"`
+	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4"`
+	DummyGatewayAddressV6 string `json:"dummyGatewayAddressV6"`
 
 	// Private fields used internally. Filled at the load time.
 	dummyGatewayAddressV4 net.IP `json:"-"`
 	dummyGatewayAddressV6 net.IP `json:"-"`
 }
 
-func (n *NetConf) hasV4() bool {
-	return n.dummyGatewayAddressV4 != nil
-}
-
-func (n *NetConf) hasV6() bool {
-	return n.dummyGatewayAddressV6 != nil
-}
+const (
+	defaultDummyGatewayAddressV4 = "169.254.0.1"
+	defaultDummyGatewayAddressV6 = "fd00:169:254::1"
+)
 
 func init() {
 	// this ensures that main runs only on main thread (thread group leader).
@@ -77,35 +76,35 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 		return nil, "", fmt.Errorf("vrfName is required")
 	}
 
-	if n.DummyGatewayAddressV4 == "" && n.DummyGatewayAddressV6 == "" {
-		return nil, "", fmt.Errorf("either dummyGatewayAddressV4 or dummyGatewayAddressV6 must be specified")
+	if !n.EnableIPv4 && !n.EnableIPv6 {
+		return nil, "", fmt.Errorf("either IPv4 or IPv6 must be enabled")
 	}
 
-	if n.DummyGatewayAddressV4 != "" {
-		dummyGatewayAddressV4 := net.ParseIP(n.DummyGatewayAddressV4)
-		if dummyGatewayAddressV4 == nil {
-			return nil, "", fmt.Errorf("failed to parse IPv4 dummy gateway address %q", n.DummyGatewayAddressV4)
-		}
-
-		if dummyGatewayAddressV4.To4() == nil {
-			return nil, "", fmt.Errorf("dummyGatewayAddressV4 must be an IPv4 address")
-		}
-
-		n.dummyGatewayAddressV4 = dummyGatewayAddressV4
+	if n.DummyGatewayAddressV4 == "" {
+		n.DummyGatewayAddressV4 = defaultDummyGatewayAddressV4
 	}
 
-	if n.DummyGatewayAddressV6 != "" {
-		dummyGatewayAddressV6 := net.ParseIP(n.DummyGatewayAddressV6)
-		if dummyGatewayAddressV6 == nil {
-			return nil, "", fmt.Errorf("failed to parse IPv6 dummy gateway address %q", n.DummyGatewayAddressV6)
-		}
-
-		if dummyGatewayAddressV6.To4() != nil {
-			return nil, "", fmt.Errorf("dummyGatewayAddressV6 must be an IPv6 address")
-		}
-
-		n.dummyGatewayAddressV6 = dummyGatewayAddressV6
+	if n.DummyGatewayAddressV6 == "" {
+		n.DummyGatewayAddressV6 = defaultDummyGatewayAddressV6
 	}
+
+	dummyGatewayAddressV4 := net.ParseIP(n.DummyGatewayAddressV4)
+	if dummyGatewayAddressV4 == nil {
+		return nil, "", fmt.Errorf("failed to parse IPv4 dummy gateway address %q", n.DummyGatewayAddressV4)
+	}
+	if dummyGatewayAddressV4.To4() == nil {
+		return nil, "", fmt.Errorf("dummyGatewayAddressV4 must be an IPv4 address")
+	}
+	n.dummyGatewayAddressV4 = dummyGatewayAddressV4
+
+	dummyGatewayAddressV6 := net.ParseIP(n.DummyGatewayAddressV6)
+	if dummyGatewayAddressV6 == nil {
+		return nil, "", fmt.Errorf("failed to parse IPv6 dummy gateway address %q", n.DummyGatewayAddressV6)
+	}
+	if dummyGatewayAddressV6.To4() != nil {
+		return nil, "", fmt.Errorf("dummyGatewayAddressV6 must be an IPv6 address")
+	}
+	n.dummyGatewayAddressV6 = dummyGatewayAddressV6
 
 	return n, n.CNIVersion, nil
 }
@@ -240,7 +239,7 @@ func ensureVRF(name string, requestedTable uint32) (*netlink.Vrf, error) {
 // FRR: https://docs.frrouting.org/en/latest/zebra.html#administrative-distance
 // Linux VRF: https://www.kernel.org/doc/Documentation/networking/vrf.txt
 func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
-	if n.hasV4() {
+	if n.EnableIPv4 {
 		if err := netlink.RouteReplace(&netlink.Route{
 			Dst: &net.IPNet{
 				IP:   net.IPv4zero,
@@ -254,7 +253,7 @@ func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
 		}
 	}
 
-	if n.hasV6() {
+	if n.EnableIPv6 {
 		if err := netlink.RouteReplace(&netlink.Route{
 			Dst: &net.IPNet{
 				IP:   net.IPv6unspecified,
@@ -335,14 +334,14 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 		return fmt.Errorf("failed to convert link to veth")
 	}
 
-	if n.hasV4() {
+	if n.EnableIPv4 {
 		// setup proxy-arp to the host interface
 		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/proxy_arp", hostVeth.Name), "1"); err != nil {
 			return fmt.Errorf("failed to set proxy_arp: %w", err)
 		}
 	}
 
-	if n.hasV6() {
+	if n.EnableIPv6 {
 		// setup proxy-ndp to the host interface
 		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/proxy_ndp", hostVeth.Name), "1"); err != nil {
 			return fmt.Errorf("failed to set proxy_ndp: %w", err)
@@ -366,7 +365,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 		dst := ip.Address
 
 		switch {
-		case ip.Address.IP.To4() != nil && n.hasV4():
+		case ip.Address.IP.To4() != nil && n.EnableIPv4:
 			dst.Mask = net.CIDRMask(32, 32)
 			if err := netlink.RouteAdd(&netlink.Route{
 				LinkIndex: hostVeth.Index,
@@ -376,7 +375,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 			}); err != nil {
 				return err
 			}
-		case ip.Address.IP.To4() == nil && n.hasV6():
+		case ip.Address.IP.To4() == nil && n.EnableIPv6:
 			dst.Mask = net.CIDRMask(128, 128)
 			if err := netlink.RouteAdd(&netlink.Route{
 				LinkIndex: hostVeth.Index,
@@ -415,9 +414,9 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.In
 	// All routes should have dummy gateway address as a nexthop. Override the GW field.
 	for _, route := range result.Routes {
 		switch {
-		case route.Dst.IP.To4() != nil && n.hasV4():
+		case route.Dst.IP.To4() != nil && n.EnableIPv4:
 			route.GW = n.dummyGatewayAddressV4
-		case route.Dst.IP.To4() == nil && n.hasV6():
+		case route.Dst.IP.To4() == nil && n.EnableIPv6:
 			route.GW = n.dummyGatewayAddressV6
 		default:
 			return fmt.Errorf("route %s doesn't have a suitable gateway address", route.Dst.String())
@@ -429,7 +428,7 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.In
 	// the routes uses the dummy gateway address as a gateway, so the route
 	// should be present before the other routes.
 	dummyGatewayRoutes := []*types.Route{}
-	if n.hasV4() {
+	if n.EnableIPv4 {
 		rt := &types.Route{
 			Dst: net.IPNet{
 				IP:   n.dummyGatewayAddressV4,
@@ -439,7 +438,7 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.In
 		}
 		dummyGatewayRoutes = append(dummyGatewayRoutes, rt)
 	}
-	if n.hasV6() {
+	if n.EnableIPv6 {
 		rt := &types.Route{
 			Dst: net.IPNet{
 				IP:   n.dummyGatewayAddressV6,
@@ -449,6 +448,7 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.In
 		}
 		dummyGatewayRoutes = append(dummyGatewayRoutes, rt)
 	}
+
 	result.Routes = append(dummyGatewayRoutes, result.Routes...)
 
 	return netns.Do(func(_ ns.NetNS) error {
