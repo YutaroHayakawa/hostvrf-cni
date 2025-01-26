@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -157,28 +156,6 @@ func TestLoadNetConf(t *testing.T) {
 			}
 		})
 	}
-}
-
-type testNetConf struct {
-	VRFName               string `json:"vrfName"`
-	VRFTable              uint32 `json:"vrfTable"`
-	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4,omitempty"`
-	DummyGatewayAddressV6 string `json:"dummyGatewayAddressV6,omitempty"`
-
-	IPAM testIPAMConf
-}
-
-type testIPAMConf struct {
-	Addresses []testIPAMAddresses
-	Routes    []testIPAMRoute
-}
-
-type testIPAMAddresses struct {
-	Address string `json:"address"`
-}
-
-type testIPAMRoute struct {
-	Dst string `json:"dst"`
 }
 
 const testRunnerImage = "localhost/hostvrf-tester:local"
@@ -453,7 +430,7 @@ func TestCNIAddDel(t *testing.T) {
 			})
 
 			confList := struct {
-				Plugins []testNetConf
+				Plugins []json.RawMessage
 			}{}
 
 			netConfFile := baseDir + "/hostvrf.conflist"
@@ -461,7 +438,8 @@ func TestCNIAddDel(t *testing.T) {
 			err = readJSONFile(netConfFile, &confList)
 			require.NoError(t, err)
 
-			netConf := confList.Plugins[0]
+			netConf, _, err := loadNetConf(confList.Plugins[0])
+			require.NoError(t, err)
 
 			err = c.Copy(ctx, "hostvrf", "hostvrf", "/go/bin")
 			require.NoError(t, err)
@@ -598,29 +576,26 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("Direct route to the containers are configured", func(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-						for _, address := range netConf.IPAM.Addresses {
-							ip, _, err := net.ParseCIDR(address.Address)
-							require.NoError(t, err)
-
+						for _, ip := range addResult.IPs {
 							// Whatever the address is, the mask should be 32 for IPv4 and 128 for IPv6
 							var ipnet *net.IPNet
-							if ip.To4() != nil {
+							if ip.Address.IP.To4() != nil {
 								ipnet = &net.IPNet{
-									IP:   ip,
+									IP:   ip.Address.IP,
 									Mask: net.CIDRMask(32, 32),
 								}
 							} else {
 								ipnet = &net.IPNet{
-									IP:   ip,
+									IP:   ip.Address.IP,
 									Mask: net.CIDRMask(128, 128),
 								}
 							}
 
 							rt, ok := vrfRoutes[ipnet.String()]
-							require.True(t, ok, "Route to the IP %q is not configured", address.Address)
+							require.True(t, ok, "Route to the IP %q is not configured", ipnet.String())
 							require.Equal(t, rt.LinkIndex, hostVeth.Index, "Route to the IP %q is not bounded to the host veth")
 
-							if ip.To4() != nil {
+							if ip.Address.IP.To4() != nil {
 								require.Equal(t, rt.Scope, netlink.SCOPE_LINK, "Route to the IP %q is not link-scoped")
 							} else {
 								require.Equal(t, netlink.NextHopFlag(rt.Flags), netlink.FLAG_ONLINK, "Route to the IP %q is not onlink")
@@ -661,21 +636,21 @@ func TestCNIAddDel(t *testing.T) {
 							addrMap[addr.IPNet.String()] = addr
 						}
 
-						for _, addr := range netConf.IPAM.Addresses {
-							p, err := netip.ParsePrefix(addr.Address)
-							require.NoError(t, err)
-
+						for _, ip := range addResult.IPs {
 							// Whatever the original address is, we assign it with maximum prefix length.
-							if p.Addr().Is4() {
-								p, err = p.Addr().Prefix(32)
-								require.NoError(t, err)
+							var ipnet *net.IPNet
+							if ip.Address.IP.To4() != nil {
+								ipnet = &net.IPNet{
+									IP:   ip.Address.IP,
+									Mask: net.CIDRMask(32, 32),
+								}
 							} else {
-								p, err = p.Addr().Prefix(128)
-								require.NoError(t, err)
+								ipnet = &net.IPNet{
+									IP:   ip.Address.IP,
+									Mask: net.CIDRMask(128, 128),
+								}
 							}
-
-							_, ok := addrMap[p.String()]
-							require.True(t, ok, "Address %q is not assigned to the container interface", addr.Address)
+							require.Contains(t, addrMap, ipnet.String(), "Address %q is not assigned to the container interface", ip.Address.IP.String())
 						}
 
 						return nil
@@ -713,18 +688,19 @@ func TestCNIAddDel(t *testing.T) {
 							v6NH = net.ParseIP(netConf.DummyGatewayAddressV6)
 						}
 
-						for _, route := range netConf.IPAM.Routes {
-							p, err := netip.ParsePrefix(route.Dst)
-							require.NoError(t, err)
+						for _, route := range addResult.Routes {
+							if route.Dst.IP.Equal(v4NH) || route.Dst.IP.Equal(v6NH) {
+								continue
+							}
 
 							var expectedNexthop net.IP
-							if p.Addr().Is4() {
+							if route.Dst.IP.To4() != nil {
 								expectedNexthop = v4NH
 							} else {
 								expectedNexthop = v6NH
 							}
 
-							rt, ok := containerRoutes[p.String()]
+							rt, ok := containerRoutes[route.Dst.String()]
 							require.True(t, ok, "Route %q is not instantiated", route.Dst)
 							require.Equal(t, expectedNexthop.String(), rt.Gw.String(), "Nexthop for the route is wrong")
 						}

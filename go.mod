@@ -8,6 +8,8 @@ require (
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/stretchr/testify v1.10.0
 	github.com/vishvananda/netlink v1.3.0
+	go.mongodb.org/mongo-driver v1.17.2
+	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	golang.org/x/sys v0.29.0
 )
 
