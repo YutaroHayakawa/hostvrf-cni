@@ -527,31 +527,6 @@ func TestCNIAddDel(t *testing.T) {
 					require.NoError(t, err)
 				})
 
-				t.Run("VRF loopback IPs are assigned", func(t *testing.T) {
-					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-						if netConf.LoopbackAddressV4 != "" {
-							addrs, err := netlink.AddrList(vrf, netlink.FAMILY_V4)
-							require.NoError(t, err)
-							require.Len(t, addrs, 1, "IPv4 loopback address is missing")
-							expected := net.ParseIP(netConf.LoopbackAddressV4)
-							require.NotNil(t, expected)
-							require.Equal(t, expected.String(), addrs[0].IP.String(),
-								"Unexpected IPv4 loopback address %q is assigned to the VRF", addrs[0].IP.String())
-						}
-						if netConf.LoopbackAddressV6 != "" {
-							addrs, err := netlink.AddrList(vrf, netlink.FAMILY_V6)
-							require.NoError(t, err)
-							require.Len(t, addrs, 1, "IPv6 loopback address is missing")
-							expected := net.ParseIP(netConf.LoopbackAddressV6)
-							require.NotNil(t, expected)
-							require.Equal(t, expected.String(), addrs[0].IP.String(),
-								"Unexpected IPv6 loopback address %q is assigned to the VRF", addrs[0].IP.String())
-						}
-						return nil
-					})
-					require.NoError(t, err)
-				})
-
 				var hostVeth *netlink.Veth
 
 				t.Run("Host-side veth is enslaved to the VRF", func(t *testing.T) {
@@ -831,9 +806,8 @@ func TestCNIAddDel(t *testing.T) {
 								},
 							)
 							require.NoError(t, err)
-							require.Len(t, routes, 2, "Unexpected number of IPv4 routes are left")
+							require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
 							require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
-							require.Contains(t, routes, netConf.LoopbackAddressV4+"/32", "Loopback route is missing after DEL")
 						}
 						if netConf.LoopbackAddressV6 != "" {
 							routes := map[string]netlink.Route{}
@@ -849,9 +823,8 @@ func TestCNIAddDel(t *testing.T) {
 								},
 							)
 							require.NoError(t, err)
-							require.Len(t, routes, 2, "Unexpected number of IPv6 routes are left")
+							require.Len(t, routes, 1, "Unexpected number of IPv6 routes are left")
 							require.Contains(t, routes, "::/0", "Unreachable default route is missing after DEL")
-							require.Contains(t, routes, netConf.LoopbackAddressV6+"/128", "Loopback route is missing after DEL")
 						}
 						return nil
 					})

@@ -220,33 +220,6 @@ func ensureVRF(name string, requestedTable uint32) (*netlink.Vrf, error) {
 	return vrf, nil
 }
 
-// ensureLoopbackAddresses assigns loopback addresses to the VRF device
-func ensureLoopbackAddresses(n *NetConf, vrf *netlink.Vrf) error {
-	if n.hasV4() {
-		if err := netlink.AddrReplace(vrf, &netlink.Addr{
-			IPNet: &net.IPNet{
-				IP:   n.loopbackAddressV4,
-				Mask: net.CIDRMask(32, 32),
-			},
-		}); err != nil {
-			return err
-		}
-	}
-
-	if n.hasV6() {
-		if err := netlink.AddrReplace(vrf, &netlink.Addr{
-			IPNet: &net.IPNet{
-				IP:   n.loopbackAddressV6,
-				Mask: net.CIDRMask(128, 128),
-			},
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // ensureUnreachableDefaultRoutes inserts unreachable routes to the VRF device.
 // This route is used to isolate the traffic from the VRF device to the outside
 // world by default. In Linux, VRF is implemented as an IP rule which is
@@ -303,11 +276,6 @@ func setupVRF(n *NetConf) (*netlink.Vrf, *current.Interface, error) {
 	vrf, err := ensureVRF(n.VRFName, n.VRFTable)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	// assign loopback addresses to the VRF
-	if err := ensureLoopbackAddresses(n, vrf); err != nil {
-		return nil, nil, fmt.Errorf("failed to assign loopback addresses to VRF: %w", err)
 	}
 
 	// insert unreachable default route for the isolation
