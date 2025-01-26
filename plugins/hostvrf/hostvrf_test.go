@@ -67,7 +67,6 @@ func TestLoadNetConf(t *testing.T) {
 				EnableIPv4:            true,
 				EnableIPv6:            true,
 				DummyGatewayAddressV4: "169.254.0.1",
-				DummyGatewayAddressV6: "fd00::1",
 			}),
 			expectError: false,
 		},
@@ -107,10 +106,9 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFName:               "vrf0",
-				VRFTable:              100,
-				EnableIPv6:            true,
-				DummyGatewayAddressV6: "fd00::1",
+				VRFName:    "vrf0",
+				VRFTable:   100,
+				EnableIPv6: true,
 			}),
 			expectError: false,
 		},
@@ -442,6 +440,17 @@ func validateAndNormalizeRandomFields(t *testing.T, result *current.Result) {
 		// Normalize the MAC address for later comparison
 		iface.Mac = "00:00:00:00:00:00"
 	}
+
+	normalizedGw := net.ParseIP("fe80::1")
+	require.NotNil(t, normalizedGw)
+
+	for _, route := range result.Routes {
+		// If the gateway address is IPv6 link-local address, it's
+		// random. Normalize it.
+		if route.GW.To4() == nil && route.GW.IsLinkLocalUnicast() {
+			route.GW = normalizedGw
+		}
+	}
 }
 
 func TestCNIAddDel(t *testing.T) {
@@ -599,14 +608,6 @@ func TestCNIAddDel(t *testing.T) {
 							v, err = sysctl.Sysctl("net/ipv6/conf/" + hostVeth.Name + "/forwarding")
 							require.NoError(t, err)
 							require.Equal(t, "1", v, "IPv6 forwarding is not enabled on the host side veth")
-
-							neighbors, err := netlink.NeighProxyList(hostVeth.Index, netlink.FAMILY_V6)
-							require.NoError(t, err)
-							require.Len(t, neighbors, 1, "Proxy NDP neighbor entry is missing")
-
-							expected := net.ParseIP(netConf.DummyGatewayAddressV6)
-							require.NotNil(t, expected)
-							require.True(t, neighbors[0].IP.Equal(expected), "Proxy NDP is set for the wrong IP: %s", neighbors[0].IP.String())
 						}
 						return nil
 					})
@@ -738,48 +739,36 @@ func TestCNIAddDel(t *testing.T) {
 
 				t.Run("Container routes are instantiated", func(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
-						var v4NH, v6NH net.IP
+						var v4NH net.IP
 						if netConf.EnableIPv4 {
 							v4NH = net.ParseIP(netConf.DummyGatewayAddressV4)
 						}
-						if netConf.EnableIPv6 {
-							v6NH = net.ParseIP(netConf.DummyGatewayAddressV6)
-						}
 
 						for _, route := range addResult.Routes {
-							if route.Dst.IP.Equal(v4NH) || route.Dst.IP.Equal(v6NH) {
+							if route.Dst.IP.Equal(v4NH) {
 								continue
 							}
 
-							var expectedNexthop net.IP
 							if route.Dst.IP.To4() != nil {
-								expectedNexthop = v4NH
+								rt, ok := containerRoutes[route.Dst.String()]
+								require.True(t, ok, "Route %q is not instantiated", route.Dst)
+								require.Equal(t, v4NH.String(), rt.Gw.String(), "Nexthop for the IPv4 route is wrong")
 							} else {
-								expectedNexthop = v6NH
+								require.True(t, route.GW.IsLinkLocalUnicast(), "Nexthop for the IPv6 route is not link local")
 							}
-
-							rt, ok := containerRoutes[route.Dst.String()]
-							require.True(t, ok, "Route %q is not instantiated", route.Dst)
-							require.Equal(t, expectedNexthop.String(), rt.Gw.String(), "Nexthop for the route is wrong")
 						}
 
 						return nil
 					})
 				})
 
-				t.Run("Route to the dummy gateway addresses are instantiated", func(t *testing.T) {
+				t.Run("Route to the IPv4 dummy gateway address is instantiated", func(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
 						if netConf.EnableIPv4 {
 							rt, ok := containerRoutes[netConf.DummyGatewayAddressV4+"/32"]
 							require.True(t, ok, "IPv4 route to the dummy gateway address is missing")
 							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv4 route to the dummy gateway address is not bounded to the interface")
 							require.Nil(t, rt.Gw, "IPv4 route to the dummy gateway address must not have a gateway")
-						}
-						if netConf.EnableIPv6 {
-							rt, ok := containerRoutes[netConf.DummyGatewayAddressV6+"/128"]
-							require.True(t, ok, "IPv6 route to the dummy gateway address is missing")
-							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv6 route to the dummy gateway address is not bounded to the interface")
-							require.Nil(t, rt.Gw, "IPv6 route to the dummy gateway address must not have a gateway")
 						}
 						return nil
 					})

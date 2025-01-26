@@ -43,16 +43,13 @@ type NetConf struct {
 	EnableIPv4            bool   `json:"enableIPv4"`
 	EnableIPv6            bool   `json:"enableIPv6"`
 	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4"`
-	DummyGatewayAddressV6 string `json:"dummyGatewayAddressV6"`
 
 	// Private fields used internally. Filled at the load time.
 	dummyGatewayAddressV4 net.IP `json:"-"`
-	dummyGatewayAddressV6 net.IP `json:"-"`
 }
 
 const (
 	defaultDummyGatewayAddressV4 = "169.254.0.1"
-	defaultDummyGatewayAddressV6 = "fd00:169:254::1"
 )
 
 func init() {
@@ -84,10 +81,6 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 		n.DummyGatewayAddressV4 = defaultDummyGatewayAddressV4
 	}
 
-	if n.DummyGatewayAddressV6 == "" {
-		n.DummyGatewayAddressV6 = defaultDummyGatewayAddressV6
-	}
-
 	dummyGatewayAddressV4 := net.ParseIP(n.DummyGatewayAddressV4)
 	if dummyGatewayAddressV4 == nil {
 		return nil, "", fmt.Errorf("failed to parse IPv4 dummy gateway address %q", n.DummyGatewayAddressV4)
@@ -96,15 +89,6 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 		return nil, "", fmt.Errorf("dummyGatewayAddressV4 must be an IPv4 address")
 	}
 	n.dummyGatewayAddressV4 = dummyGatewayAddressV4
-
-	dummyGatewayAddressV6 := net.ParseIP(n.DummyGatewayAddressV6)
-	if dummyGatewayAddressV6 == nil {
-		return nil, "", fmt.Errorf("failed to parse IPv6 dummy gateway address %q", n.DummyGatewayAddressV6)
-	}
-	if dummyGatewayAddressV6.To4() != nil {
-		return nil, "", fmt.Errorf("dummyGatewayAddressV6 must be an IPv6 address")
-	}
-	n.dummyGatewayAddressV6 = dummyGatewayAddressV6
 
 	return n, n.CNIVersion, nil
 }
@@ -288,7 +272,77 @@ func setupVRF(n *NetConf) (*netlink.Vrf, *current.Interface, error) {
 	}, nil
 }
 
-func setupVeth(netns ns.NetNS, vrf *netlink.Vrf, ifName string) (*current.Interface, *current.Interface, error) {
+func setHostVethSysctls(n *NetConf, hostVethLink netlink.Link) error {
+	if n.EnableIPv4 {
+		// Setup proxy-arp to the host interface
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/proxy_arp", hostVethLink.Attrs().Name), "1"); err != nil {
+			return fmt.Errorf("failed to set proxy_arp: %w", err)
+		}
+
+		// Enable IPv4 forwarding
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/forwarding", hostVethLink.Attrs().Name), "1"); err != nil {
+			return fmt.Errorf("failed to set forwarding: %w", err)
+		}
+	}
+
+	if n.EnableIPv6 {
+		// Disable IPv6 DAD. We don't need this because this is a point to point link.
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/accept_dad", hostVethLink.Attrs().Name), "0"); err != nil {
+			return fmt.Errorf("failed to disable DAD: %w", err)
+		}
+
+		// Enable IPv6. This triggers the link-local address generation.
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/disable_ipv6", hostVethLink.Attrs().Name), "0"); err != nil {
+			return fmt.Errorf("failed to enable ipv6: %w", err)
+		}
+
+		// Setup proxy-ndp to the host interface
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/proxy_ndp", hostVethLink.Attrs().Name), "1"); err != nil {
+			return fmt.Errorf("failed to set proxy_ndp: %w", err)
+		}
+
+		// Enable IPv6 forwarding
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/forwarding", hostVethLink.Attrs().Name), "1"); err != nil {
+			return fmt.Errorf("failed to set forwarding: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func setContainerVethSysctls(n *NetConf, containerVethLink netlink.Link) error {
+	if n.EnableIPv6 {
+		// Disable IPv6 DAD. We don't need this because this is a point to point link.
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/accept_dad", containerVethLink.Attrs().Name), "0"); err != nil {
+			return fmt.Errorf("failed to disable DAD: %w", err)
+		}
+
+		// Enable IPv6. This triggers the link-local address generation
+		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/disable_ipv6", containerVethLink.Attrs().Name), "0"); err != nil {
+			return fmt.Errorf("failed to enable ipv6 for veth: %w", err)
+		}
+	}
+	return nil
+}
+
+func setDummyGatewayAddressV4(n *NetConf, hostVethLink netlink.Link) error {
+	// Assign link-scoped dummy gateway address to the host veth. We need
+	// to do this because proxy_arp only replies when the target address is
+	// reachable. Since we have a blackhole default route in the VRF table,
+	// there's no guarantee that the dummy gateway address is reachable.
+	//
+	// Note that for IPv6, we don't need to do this because kernel assigns
+	// the link-local address automatically.
+	return netlink.AddrReplace(hostVethLink, &netlink.Addr{
+		IPNet: &net.IPNet{
+			IP:   n.dummyGatewayAddressV4,
+			Mask: net.CIDRMask(32, 32),
+		},
+		Scope: int(netlink.SCOPE_LINK),
+	})
+}
+
+func createVeth(n *NetConf, netns ns.NetNS, vrf *netlink.Vrf, ifName string) (*current.Interface, *current.Interface, error) {
 	contIface := &current.Interface{}
 	hostIface := &current.Interface{}
 
@@ -298,10 +352,35 @@ func setupVeth(netns ns.NetNS, vrf *netlink.Vrf, ifName string) (*current.Interf
 		if err != nil {
 			return err
 		}
+
+		containerVethLink, err := netlink.LinkByName(containerVeth.Name)
+		if err != nil {
+			return fmt.Errorf("failed to get container veth: %w", err)
+		}
+
+		// We need to enable the container-side veth to get IPv6 link local address
+		if err := netlink.LinkSetUp(containerVethLink); err != nil {
+			return fmt.Errorf("failed to enable container veth: %w", err)
+		}
+
+		// Set sysctls for container veth
+		if err := setContainerVethSysctls(n, containerVethLink); err != nil {
+			return fmt.Errorf("failed to set container veth sysctls: %w", err)
+		}
+
+		// Wait for IPv6 link-local address to be settled
+		if n.EnableIPv6 {
+			if err := ip.SettleAddresses(containerVeth.Name, 10); err != nil {
+				return fmt.Errorf("host veth's IPv6 link-local address didn't appear: %w", err)
+			}
+		}
+
+		// Fill the CNI result
 		contIface.Name = containerVeth.Name
 		contIface.Mac = containerVeth.HardwareAddr.String()
 		contIface.Sandbox = netns.Path()
 		hostIface.Name = hostVeth.Name
+
 		return nil
 	})
 	if err != nil {
@@ -320,6 +399,25 @@ func setupVeth(netns ns.NetNS, vrf *netlink.Vrf, ifName string) (*current.Interf
 		return nil, nil, fmt.Errorf("failed to connect %q to VRF %v: %v", hostVethLink.Attrs().Name, vrf.Attrs().Name, err)
 	}
 
+	// Set sysctls for host veth
+	if err := setHostVethSysctls(n, hostVethLink); err != nil {
+		return nil, nil, fmt.Errorf("failed to set host veth sysctls: %w", err)
+	}
+
+	// Set dummy gateway address for IPv4
+	if n.EnableIPv4 {
+		if err := setDummyGatewayAddressV4(n, hostVethLink); err != nil {
+			return nil, nil, fmt.Errorf("failed to assign IPv4 dummy gateway address: %w", err)
+		}
+	}
+
+	// Wait for IPv6 link-local address to be settled
+	if n.EnableIPv6 {
+		if err := ip.SettleAddresses(hostIface.Name, 10); err != nil {
+			return nil, nil, fmt.Errorf("host veth's IPv6 link-local address didn't appear: %w", err)
+		}
+	}
+
 	return hostIface, contIface, nil
 }
 
@@ -327,52 +425,6 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 	hostLink, err := netlink.LinkByName(hostInterface.Name)
 	if err != nil {
 		return err
-	}
-
-	hostVeth, ok := hostLink.(*netlink.Veth)
-	if !ok {
-		return fmt.Errorf("failed to convert link to veth")
-	}
-
-	if n.EnableIPv4 {
-		// setup proxy-arp to the host interface
-		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/proxy_arp", hostVeth.Name), "1"); err != nil {
-			return fmt.Errorf("failed to set proxy_arp: %w", err)
-		}
-
-		// Enable IPv4 forwarding
-		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/forwarding", hostVeth.Name), "1"); err != nil {
-			return fmt.Errorf("failed to set forwarding: %w", err)
-		}
-	}
-
-	if n.EnableIPv6 {
-		// Enable IPv6
-		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/disable_ipv6", hostVeth.Name), "0"); err != nil {
-			return fmt.Errorf("failed to enable ipv6: %w", err)
-		}
-
-		// setup proxy-ndp to the host interface
-		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/proxy_ndp", hostVeth.Name), "1"); err != nil {
-			return fmt.Errorf("failed to set proxy_ndp: %w", err)
-		}
-
-		// Enable IPv6 forwarding
-		if _, err = sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/forwarding", hostVeth.Name), "1"); err != nil {
-			return fmt.Errorf("failed to set forwarding: %w", err)
-		}
-
-		// For IPv6, we need to setup the neighbor entry for proxying
-		if err := netlink.NeighAdd(&netlink.Neigh{
-			LinkIndex:   hostVeth.Index,
-			Family:      netlink.FAMILY_V6,
-			State:       netlink.NUD_PERMANENT,
-			IP:          n.dummyGatewayAddressV6,
-			Flags:       netlink.NTF_PROXY,
-			MasterIndex: vrf.Index,
-		}); err != nil {
-			return fmt.Errorf("failed to set proxy-ndp neighbor entry: %w", err)
-		}
 	}
 
 	// Configure direct routes to the addresses provided by the IPAM plugin
@@ -383,7 +435,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 		case ip.Address.IP.To4() != nil && n.EnableIPv4:
 			dst.Mask = net.CIDRMask(32, 32)
 			if err := netlink.RouteAdd(&netlink.Route{
-				LinkIndex: hostVeth.Index,
+				LinkIndex: hostLink.Attrs().Index,
 				Dst:       &dst,
 				Table:     int(vrf.Table),
 				Scope:     netlink.SCOPE_LINK,
@@ -393,7 +445,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 		case ip.Address.IP.To4() == nil && n.EnableIPv6:
 			dst.Mask = net.CIDRMask(128, 128)
 			if err := netlink.RouteAdd(&netlink.Route{
-				LinkIndex: hostVeth.Index,
+				LinkIndex: hostLink.Attrs().Index,
 				Dst:       &dst,
 				Table:     int(vrf.Table),
 				Flags:     int(netlink.FLAG_ONLINK),
@@ -409,7 +461,42 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 	return nil
 }
 
-func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.Interface, result *current.Result) error {
+func getDummyGatewayAddresses(n *NetConf, hostInterface *current.Interface) (net.IP, net.IP, error) {
+	hostVethLink, err := netlink.LinkByName(hostInterface.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var v4Gw, v6Gw net.IP
+
+	if n.EnableIPv4 {
+		v4Gw = n.dummyGatewayAddressV4
+	}
+
+	if n.EnableIPv6 {
+		addrs, err := netlink.AddrList(hostVethLink, netlink.FAMILY_V6)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get IPv6 gateway address: %w", err)
+		}
+		if len(addrs) != 1 {
+			return nil, nil, fmt.Errorf("unexpected number of IPv6 addresses on the host veth: %v", addrs)
+		}
+		// We should have only one address (link local address) on the host veth at this point
+		v6Gw = addrs[0].IP
+	}
+
+	return v4Gw, v6Gw, nil
+}
+
+func ensureHostRoutes(n *NetConf, netns ns.NetNS, hostInterface, containerInterface *current.Interface, result *current.Result) error {
+	// Get IPv4 and IPv6 dummy gateway addresses. For IPv4, it would be a
+	// configured one. For IPv6, it's a link local address of the host
+	// veth.
+	v4Gw, v6Gw, err := getDummyGatewayAddresses(n, hostInterface)
+	if err != nil {
+		return err
+	}
+
 	// IP address should be assigned to the container interface.
 	// Fill the Interface field. We also don't provide any L2
 	// reachability among containers. Rewrite all addresses to have
@@ -430,9 +517,9 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.In
 	for _, route := range result.Routes {
 		switch {
 		case route.Dst.IP.To4() != nil && n.EnableIPv4:
-			route.GW = n.dummyGatewayAddressV4
+			route.GW = v4Gw
 		case route.Dst.IP.To4() == nil && n.EnableIPv6:
-			route.GW = n.dummyGatewayAddressV6
+			route.GW = v6Gw
 		default:
 			return fmt.Errorf("route %s doesn't have a suitable gateway address", route.Dst.String())
 		}
@@ -446,18 +533,8 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, containerInterface *current.In
 	if n.EnableIPv4 {
 		rt := &types.Route{
 			Dst: net.IPNet{
-				IP:   n.dummyGatewayAddressV4,
+				IP:   v4Gw,
 				Mask: net.CIDRMask(32, 32),
-			},
-			Scope: current.Int(int(netlink.SCOPE_LINK)),
-		}
-		dummyGatewayRoutes = append(dummyGatewayRoutes, rt)
-	}
-	if n.EnableIPv6 {
-		rt := &types.Route{
-			Dst: net.IPNet{
-				IP:   n.dummyGatewayAddressV6,
-				Mask: net.CIDRMask(128, 128),
 			},
 			Scope: current.Int(int(netlink.SCOPE_LINK)),
 		}
@@ -490,7 +567,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 	defer netns.Close()
 
-	hostInterface, containerInterface, err := setupVeth(netns, vrf, args.IfName)
+	hostInterface, containerInterface, err := createVeth(n, netns, vrf, args.IfName)
 	if err != nil {
 		return err
 	}
@@ -532,7 +609,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	// Make container -> host connectivity
-	if err = ensureHostRoutes(n, netns, containerInterface, result); err != nil {
+	if err = ensureHostRoutes(n, netns, hostInterface, containerInterface, result); err != nil {
 		return fmt.Errorf("failed to setup container to host routes: %w", err)
 	}
 
