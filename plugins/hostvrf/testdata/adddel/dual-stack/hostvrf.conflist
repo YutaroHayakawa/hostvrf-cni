@@ -7,8 +7,8 @@
 			"vrfName": "vrf0",
 			"enableIPv4": true,
 			"enableIPv6": true,
+			"isolationMode": "none",
 			"dummyGatewayAddressV4": "169.254.0.1",
-			"dummyGatewayAddressV6": "fd00::1",
 			"ipam": {
 				"type": "static",
 				"addresses": [

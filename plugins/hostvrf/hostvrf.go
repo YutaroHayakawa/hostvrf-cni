@@ -43,6 +43,7 @@ type NetConf struct {
 	ProtocolID            uint8  `json:"protocolID"`
 	EnableIPv4            bool   `json:"enableIPv4"`
 	EnableIPv6            bool   `json:"enableIPv6"`
+	IsolationMode         string `json:"isolationMode"`
 	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4"`
 
 	// Private fields used internally. Filled at the load time.
@@ -54,6 +55,10 @@ const (
 
 	// The protocol ID which is not reserved in the /etc/iproute2/rt_protos by default
 	defaultProtocolID = 31
+
+	// Isolation levels
+	isolationModeNone = "none"
+	isolationModeFull = "full"
 )
 
 func init() {
@@ -83,6 +88,15 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 
 	if !n.EnableIPv4 && !n.EnableIPv6 {
 		return nil, "", fmt.Errorf("either IPv4 or IPv6 must be enabled")
+	}
+
+	switch n.IsolationMode {
+	case isolationModeNone, isolationModeFull:
+	case "":
+		// Set default
+		n.IsolationMode = isolationModeFull
+	default:
+		return nil, "", fmt.Errorf("unknown isolation level %q", n.IsolationMode)
 	}
 
 	if n.DummyGatewayAddressV4 == "" {
@@ -231,6 +245,15 @@ func ensureVRF(name string, requestedTable uint32) (*netlink.Vrf, error) {
 // FRR: https://docs.frrouting.org/en/latest/zebra.html#administrative-distance
 // Linux VRF: https://www.kernel.org/doc/Documentation/networking/vrf.txt
 func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
+	// Check isolation mode to determine if we need to insert unreachable routes
+	switch n.IsolationMode {
+	case isolationModeNone:
+		return nil
+	case isolationModeFull:
+	default:
+		return fmt.Errorf("BUG: Unhandled isolation mode %q", n.IsolationMode)
+	}
+
 	if n.EnableIPv4 {
 		if err := netlink.RouteReplace(&netlink.Route{
 			Dst: &net.IPNet{
@@ -560,6 +583,44 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, hostInterface, containerInterf
 	})
 }
 
+// This makes default VRF => this VRF connectivity by inserting routes to the
+// IPAM-provided address. If the address is has non-maximum prefix length, this
+// function calculates the network address and inserts the route to the network
+// address.
+//
+// For example, for 10.0.0.1/24, it inserts the route like:
+//
+// ip route replace 10.0.0.0/24 proto 31 dev vrf0
+func ensureDefaultVRFRoutes(n *NetConf, vrf *netlink.Vrf, result *current.Result) error {
+	// Check isolation mode to determine if we need to insert routes
+	switch n.IsolationMode {
+	case isolationModeNone:
+	case isolationModeFull:
+		return nil
+	default:
+		return fmt.Errorf("BUG: Unhandled isolation mode %q", n.IsolationMode)
+	}
+
+	for _, ip := range result.IPs {
+		if (ip.Address.IP.To4() != nil && !n.EnableIPv4) ||
+			(ip.Address.IP.To4() == nil && !n.EnableIPv6) {
+			continue
+		}
+		if err := netlink.RouteReplace(&netlink.Route{
+			Dst: &net.IPNet{
+				// Calculate the network address from the assigned IP address
+				IP:   ip.Address.IP.Mask(ip.Address.Mask),
+				Mask: ip.Address.Mask,
+			},
+			Protocol:  netlink.RouteProtocol(n.ProtocolID),
+			LinkIndex: vrf.Attrs().Index,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func cmdAdd(args *skel.CmdArgs) error {
 	success := false
 
@@ -618,6 +679,11 @@ func cmdAdd(args *skel.CmdArgs) error {
 
 	if len(result.IPs) == 0 {
 		return fmt.Errorf("IPAM plugin returned missing IP config")
+	}
+
+	// Make default VRF -> this VRF connectivity
+	if err = ensureDefaultVRFRoutes(n, vrf, result); err != nil {
+		return fmt.Errorf("failed to setup default VRF to this VRF routes: %w", err)
 	}
 
 	// Make container -> host connectivity
