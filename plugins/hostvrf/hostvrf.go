@@ -40,6 +40,7 @@ type NetConf struct {
 
 	VRFName               string `json:"vrfName"`
 	VRFTable              uint32 `json:"vrfTable"`
+	ProtocolID            uint8  `json:"protocolID"`
 	EnableIPv4            bool   `json:"enableIPv4"`
 	EnableIPv6            bool   `json:"enableIPv6"`
 	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4"`
@@ -50,6 +51,9 @@ type NetConf struct {
 
 const (
 	defaultDummyGatewayAddressV4 = "169.254.0.1"
+
+	// The protocol ID which is not reserved in the /etc/iproute2/rt_protos by default
+	defaultProtocolID = 31
 )
 
 func init() {
@@ -71,6 +75,10 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 
 	if n.VRFName == "" {
 		return nil, "", fmt.Errorf("vrfName is required")
+	}
+
+	if n.ProtocolID == 0 {
+		n.ProtocolID = defaultProtocolID
 	}
 
 	if !n.EnableIPv4 && !n.EnableIPv6 {
@@ -232,6 +240,7 @@ func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
 			Type:     unix.RTN_UNREACHABLE,
 			Priority: 4278198272,
 			Table:    int(vrf.Table),
+			Protocol: netlink.RouteProtocol(n.ProtocolID),
 		}); err != nil {
 			return err
 		}
@@ -246,6 +255,7 @@ func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
 			Type:     unix.RTN_UNREACHABLE,
 			Priority: 4278198272,
 			Table:    int(vrf.Table),
+			Protocol: netlink.RouteProtocol(n.ProtocolID),
 		}); err != nil {
 			return err
 		}
@@ -439,6 +449,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 				Dst:       &dst,
 				Table:     int(vrf.Table),
 				Scope:     netlink.SCOPE_LINK,
+				Protocol:  netlink.RouteProtocol(n.ProtocolID),
 			}); err != nil {
 				return err
 			}
@@ -449,6 +460,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 				Dst:       &dst,
 				Table:     int(vrf.Table),
 				Flags:     int(netlink.FLAG_ONLINK),
+				Protocol:  netlink.RouteProtocol(n.ProtocolID),
 			}); err != nil {
 				return err
 			}

@@ -652,7 +652,8 @@ func TestCNIAddDel(t *testing.T) {
 
 							rt, ok := vrfRoutes[ipnet.String()]
 							require.True(t, ok, "Route to the IP %q is not configured", ipnet.String())
-							require.Equal(t, rt.LinkIndex, hostVeth.Index, "Route to the IP %q is not bounded to the host veth")
+							require.Equal(t, rt.LinkIndex, hostVeth.Index, "Route to the IP %q is not bounded to the host veth", ipnet.String())
+							require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Route to the IP %q has unexpected protocol", ipnet.String())
 
 							if ip.Address.IP.To4() != nil {
 								require.Equal(t, rt.Scope, netlink.SCOPE_LINK, "Route to the IP %q is not link-scoped")
@@ -671,11 +672,13 @@ func TestCNIAddDel(t *testing.T) {
 							rt, ok := vrfRoutes["0.0.0.0/0"]
 							require.True(t, ok, "Unreachable default route for IPv4 is not configured")
 							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv4 must be 4278198272")
+							require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Unreachable default route for IPv4 has unexpected protocol")
 						}
 						if netConf.EnableIPv6 {
 							rt, ok := vrfRoutes["::/0"]
 							require.True(t, ok, "Unreachable default route for IPv6 is not configured")
 							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv6 must be 4278198272")
+							require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Unreachable default route for IPv6 has unexpected protocol")
 						}
 						return nil
 					})
