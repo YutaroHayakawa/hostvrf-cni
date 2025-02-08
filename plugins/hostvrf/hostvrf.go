@@ -44,7 +44,6 @@ type NetConf struct {
 	EnableIPv4            bool   `json:"enableIPv4"`
 	EnableIPv6            bool   `json:"enableIPv6"`
 	IsolationMode         string `json:"isolationMode"`
-	AssignLoopbackAddress bool   `json:"assignLoopbackAddress"`
 	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4"`
 
 	// Private fields used internally. Filled at the load time.
@@ -622,41 +621,6 @@ func ensureDefaultVRFRoutes(n *NetConf, vrf *netlink.Vrf, result *current.Result
 	return nil
 }
 
-// Assign the first addresss in the IPAM-provided range to the VRF device. This
-// can be used as a "loopback" address for the VRF device. When the isolation
-// mode allows accessing the VRF from the default VRF, this address can be used
-// as a source address for the packets sent to the VRF device.
-func ensureLoopbackAddress(n *NetConf, vrf *netlink.Vrf, result *current.Result) error {
-	if !n.AssignLoopbackAddress {
-		return nil
-	}
-	for _, ip := range result.IPs {
-		var mask net.IPMask
-		if ip.Address.IP.To4() != nil {
-			if !n.EnableIPv4 {
-				continue
-			}
-			mask = net.CIDRMask(32, 32)
-		}
-		if ip.Address.IP.To4() == nil {
-			if !n.EnableIPv6 {
-				continue
-			}
-			mask = net.CIDRMask(128, 128)
-		}
-		if err := netlink.AddrReplace(vrf, &netlink.Addr{
-			IPNet: &net.IPNet{
-				// Calculate the network address from the assigned IP address
-				IP:   ip.Address.IP.Mask(ip.Address.Mask),
-				Mask: mask,
-			},
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func cmdAdd(args *skel.CmdArgs) error {
 	success := false
 
@@ -720,11 +684,6 @@ func cmdAdd(args *skel.CmdArgs) error {
 	// Make default VRF -> this VRF connectivity
 	if err = ensureDefaultVRFRoutes(n, vrf, result); err != nil {
 		return fmt.Errorf("failed to setup default VRF to this VRF routes: %w", err)
-	}
-
-	// Assign loopback address to the VRF
-	if err = ensureLoopbackAddress(n, vrf, result); err != nil {
-		return fmt.Errorf("failed to setup loopback address: %w", err)
 	}
 
 	// Make container -> host connectivity

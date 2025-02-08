@@ -903,39 +903,10 @@ func TestCNIAddDel(t *testing.T) {
 							require.NoError(t, err)
 							switch netConf.IsolationMode {
 							case isolationModeFull:
+								require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
 								require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
-								if netConf.AssignLoopbackAddress {
-									// Unreachable default route and local route to the loopback address
-									require.Len(t, routes, 2, "Unexpected number of IPv4 routes are left")
-									for _, address := range ipamConf.IPAM.Addresses {
-										ip, ipnet, err := net.ParseCIDR(address.Address)
-										require.NoError(t, err)
-										if ip.To4() == nil {
-											continue
-										}
-										ipnet.Mask = net.CIDRMask(32, 32)
-										require.Contains(t, routes, ipnet.String(), "Route to the prefix %q is missing after DEL", ipnet.String())
-									}
-								} else {
-									// Unreachable default route
-									require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
-								}
 							case isolationModeNone:
-								if netConf.AssignLoopbackAddress {
-									// Local route to the loopback address
-									require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
-									for _, address := range ipamConf.IPAM.Addresses {
-										ip, ipnet, err := net.ParseCIDR(address.Address)
-										require.NoError(t, err)
-										if ip.To4() == nil {
-											continue
-										}
-										ipnet.Mask = net.CIDRMask(32, 32)
-										require.Contains(t, routes, ipnet.String(), "Route to the prefix %q is missing after DEL", ipnet.String())
-									}
-								} else {
-									require.Empty(t, routes, "Unexpected number of IPv4 routes are left")
-								}
+								require.Empty(t, routes, "Unexpected number of IPv4 routes are left")
 							default:
 								require.FailNow(t, "Untested isolation mode: %s", netConf.IsolationMode)
 							}
@@ -956,39 +927,10 @@ func TestCNIAddDel(t *testing.T) {
 							require.NoError(t, err)
 							switch netConf.IsolationMode {
 							case isolationModeFull:
+								require.Len(t, routes, 1, "Unexpected number of IPv6 routes are left")
 								require.Contains(t, routes, "::/0", "Unreachable default route is missing after DEL")
-								if netConf.AssignLoopbackAddress {
-									// Unreachable default route and local route to the loopback address
-									require.Len(t, routes, 2, "Unexpected number of IPv6 routes are left")
-									for _, address := range ipamConf.IPAM.Addresses {
-										ip, ipnet, err := net.ParseCIDR(address.Address)
-										require.NoError(t, err)
-										if ip.To4() != nil {
-											continue
-										}
-										ipnet.Mask = net.CIDRMask(128, 128)
-										require.Contains(t, routes, ipnet.String(), "Route to the prefix %q is missing after DEL", ipnet.String())
-									}
-								} else {
-									// Unreachable default route
-									require.Len(t, routes, 1, "Unexpected number of IPv6 routes are left")
-								}
 							case isolationModeNone:
-								if netConf.AssignLoopbackAddress {
-									// Local route to the loopback address
-									require.Len(t, routes, 1, "Unexpected number of IPv6 routes are left")
-									for _, address := range ipamConf.IPAM.Addresses {
-										ip, ipnet, err := net.ParseCIDR(address.Address)
-										require.NoError(t, err)
-										if ip.To4() != nil {
-											continue
-										}
-										ipnet.Mask = net.CIDRMask(128, 128)
-										require.Contains(t, routes, ipnet.String(), "Route to the prefix %q is missing after DEL", ipnet.String())
-									}
-								} else {
-									require.Empty(t, routes, "Unexpected number of IPv6 routes are left")
-								}
+								require.Empty(t, routes, "Unexpected number of IPv6 routes are left")
 							default:
 								require.FailNow(t, "Untested isolation mode: %s", netConf.IsolationMode)
 							}
