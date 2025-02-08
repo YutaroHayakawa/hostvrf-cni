@@ -38,16 +38,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Structure to extract the static IPAM configuration
-type staticIPAMConf struct {
-	IPAM struct {
-		types.IPAM
-		Addresses []struct {
-			Address string `json:"address"`
-		} `json:"addresses"`
-	} `json:"ipam"`
-}
-
 func marshalConf(t *testing.T, n *NetConf) []byte {
 	t.Helper()
 	data, err := json.Marshal(n)
@@ -506,10 +496,6 @@ func TestCNIAddDel(t *testing.T) {
 			netConf, _, err := loadNetConf(confList.Plugins[0])
 			require.NoError(t, err)
 
-			ipamConf := staticIPAMConf{}
-			err = json.Unmarshal(confList.Plugins[0], &ipamConf)
-			require.NoError(t, err)
-
 			err = c.Copy(ctx, "hostvrf", "hostvrf", "/go/bin")
 			require.NoError(t, err)
 
@@ -628,47 +614,6 @@ func TestCNIAddDel(t *testing.T) {
 					require.NoError(t, err)
 				})
 
-				defaultVRFRoutes := map[string]netlink.Route{}
-
-				err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-					err := netlink.RouteListFilteredIter(
-						netlink.FAMILY_ALL,
-						&netlink.Route{
-							Table: unix.RT_TABLE_MAIN,
-						},
-						netlink.RT_FILTER_TABLE,
-						func(rt netlink.Route) bool {
-							defaultVRFRoutes[rt.Dst.String()] = rt
-							return true
-						},
-					)
-					require.NoError(t, err)
-					return nil
-				})
-
-				t.Run("Default VRF routes are configured", func(t *testing.T) {
-					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
-						for _, address := range ipamConf.IPAM.Addresses {
-							_, ipnet, err := net.ParseCIDR(address.Address)
-							require.NoError(t, err)
-
-							rt, ok := defaultVRFRoutes[ipnet.String()]
-							switch netConf.IsolationMode {
-							case isolationModeNone:
-								require.True(t, ok, "Route to the prefix %q is not configured", ipnet.String())
-								require.Equal(t, rt.LinkIndex, vrf.Index, "Route to the IP %q is not bounded to the VRF", ipnet.String())
-								require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Route to the IP %q has unexpected protocol", ipnet.String())
-							case isolationModeFull:
-								require.False(t, ok, "Route to the IP %q is configured", ipnet.String())
-							default:
-								require.FailNow(t, "Untested isolation mode: %s", netConf.IsolationMode)
-							}
-						}
-						return nil
-					})
-					require.NoError(t, err)
-				})
-
 				vrfRoutes := map[string]netlink.Route{}
 
 				err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
@@ -725,29 +670,15 @@ func TestCNIAddDel(t *testing.T) {
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
 						if netConf.EnableIPv4 {
 							rt, ok := vrfRoutes["0.0.0.0/0"]
-							switch netConf.IsolationMode {
-							case isolationModeFull:
-								require.True(t, ok, "Unreachable default route for IPv4 is not configured")
-								require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv4 must be 4278198272")
-								require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Unreachable default route for IPv4 has unexpected protocol")
-							case isolationModeNone:
-								require.False(t, ok, "Unreachable default route for IPv4 is configured")
-							default:
-								require.FailNow(t, "Unhandled isolation mode: %s", netConf.IsolationMode)
-							}
+							require.True(t, ok, "Unreachable default route for IPv4 is not configured")
+							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv4 must be 4278198272")
+							require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Unreachable default route for IPv4 has unexpected protocol")
 						}
 						if netConf.EnableIPv6 {
 							rt, ok := vrfRoutes["::/0"]
-							switch netConf.IsolationMode {
-							case isolationModeFull:
-								require.True(t, ok, "Unreachable default route for IPv6 is not configured")
-								require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv6 must be 4278198272")
-								require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Unreachable default route for IPv6 has unexpected protocol")
-							case isolationModeNone:
-								require.False(t, ok, "Unreachable default route for IPv6 is configured")
-							default:
-								require.FailNow(t, "Untested isolation mode: %s", netConf.IsolationMode)
-							}
+							require.True(t, ok, "Unreachable default route for IPv6 is not configured")
+							require.Equal(t, 4278198272, rt.Priority, "Metric for the unreachable default route for IPv6 must be 4278198272")
+							require.Equal(t, rt.Protocol, netlink.RouteProtocol(netConf.ProtocolID), "Unreachable default route for IPv6 has unexpected protocol")
 						}
 						return nil
 					})
@@ -901,15 +832,8 @@ func TestCNIAddDel(t *testing.T) {
 								},
 							)
 							require.NoError(t, err)
-							switch netConf.IsolationMode {
-							case isolationModeFull:
-								require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
-								require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
-							case isolationModeNone:
-								require.Empty(t, routes, "Unexpected number of IPv4 routes are left")
-							default:
-								require.FailNow(t, "Untested isolation mode: %s", netConf.IsolationMode)
-							}
+							require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
+							require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
 						}
 						if netConf.EnableIPv6 {
 							routes := map[string]netlink.Route{}
@@ -925,15 +849,8 @@ func TestCNIAddDel(t *testing.T) {
 								},
 							)
 							require.NoError(t, err)
-							switch netConf.IsolationMode {
-							case isolationModeFull:
-								require.Len(t, routes, 1, "Unexpected number of IPv6 routes are left")
-								require.Contains(t, routes, "::/0", "Unreachable default route is missing after DEL")
-							case isolationModeNone:
-								require.Empty(t, routes, "Unexpected number of IPv6 routes are left")
-							default:
-								require.FailNow(t, "Untested isolation mode: %s", netConf.IsolationMode)
-							}
+							require.Len(t, routes, 1, "Unexpected number of IPv6 routes are left")
+							require.Contains(t, routes, "::/0", "Unreachable default route is missing after DEL")
 						}
 						return nil
 					})
