@@ -42,21 +42,19 @@ import (
 type NetConf struct {
 	types.NetConf
 
-	VRFName               string `json:"vrfName"`
-	VRFTable              uint32 `json:"vrfTable"`
-	ProtocolID            uint8  `json:"protocolID"`
-	EnableIPv4            bool   `json:"enableIPv4"`
-	EnableIPv6            bool   `json:"enableIPv6"`
-	EgressNATMode         string `json:"egressNATMode"`
-	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4"`
-
-	// Private fields used internally. Filled at the load time.
-	dummyGatewayAddressV4 net.IP `json:"-"`
+	VRFName       string `json:"vrfName"`
+	VRFTable      uint32 `json:"vrfTable"`
+	ProtocolID    uint8  `json:"protocolID"`
+	EnableIPv4    bool   `json:"enableIPv4"`
+	EnableIPv6    bool   `json:"enableIPv6"`
+	EgressNATMode string `json:"egressNATMode"`
 }
 
-const (
-	defaultDummyGatewayAddressV4 = "169.254.0.1"
+var (
+	dummyGatewayAddressV4 = net.IPv4(169, 254, 0, 1)
+)
 
+const (
 	// The protocol ID which is not reserved in the /etc/iproute2/rt_protos by default
 	defaultProtocolID = 31
 
@@ -106,19 +104,6 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 	if n.EgressNATMode == "" {
 		n.EgressNATMode = egressNATModeHostIP
 	}
-
-	if n.DummyGatewayAddressV4 == "" {
-		n.DummyGatewayAddressV4 = defaultDummyGatewayAddressV4
-	}
-
-	dummyGatewayAddressV4 := net.ParseIP(n.DummyGatewayAddressV4)
-	if dummyGatewayAddressV4 == nil {
-		return nil, "", fmt.Errorf("failed to parse IPv4 dummy gateway address %q", n.DummyGatewayAddressV4)
-	}
-	if dummyGatewayAddressV4.To4() == nil {
-		return nil, "", fmt.Errorf("dummyGatewayAddressV4 must be an IPv4 address")
-	}
-	n.dummyGatewayAddressV4 = dummyGatewayAddressV4
 
 	return n, n.CNIVersion, nil
 }
@@ -369,7 +354,7 @@ func setDummyGatewayAddressV4(n *NetConf, hostVethLink netlink.Link) error {
 	// the link-local address automatically.
 	return netlink.AddrReplace(hostVethLink, &netlink.Addr{
 		IPNet: &net.IPNet{
-			IP:   n.dummyGatewayAddressV4,
+			IP:   dummyGatewayAddressV4,
 			Mask: net.CIDRMask(32, 32),
 		},
 		Scope: int(netlink.SCOPE_LINK),
@@ -506,7 +491,7 @@ func getDummyGatewayAddresses(n *NetConf, hostInterface *current.Interface) (net
 	var v4Gw, v6Gw net.IP
 
 	if n.EnableIPv4 {
-		v4Gw = n.dummyGatewayAddressV4
+		v4Gw = dummyGatewayAddressV4
 	}
 
 	if n.EnableIPv6 {

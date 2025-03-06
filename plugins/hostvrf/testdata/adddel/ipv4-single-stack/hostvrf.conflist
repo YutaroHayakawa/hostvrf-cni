@@ -8,7 +8,6 @@
 			"vrfTable": 100,
 			"enableIPv4": true,
 			"egressNATMode": "disabled",
-			"dummyGatewayAddressV4": "169.254.0.1",
 			"ipam": {
 				"type": "static",
 				"addresses": [

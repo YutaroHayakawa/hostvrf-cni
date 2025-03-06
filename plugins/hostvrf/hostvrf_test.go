@@ -63,11 +63,10 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFName:               "vrf0",
-				VRFTable:              100,
-				EnableIPv4:            true,
-				EnableIPv6:            true,
-				DummyGatewayAddressV4: "169.254.0.1",
+				VRFName:    "vrf0",
+				VRFTable:   100,
+				EnableIPv4: true,
+				EnableIPv6: true,
 			}),
 			expectError: false,
 		},
@@ -121,10 +120,9 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFName:               "vrf0",
-				VRFTable:              100,
-				EnableIPv4:            true,
-				DummyGatewayAddressV4: "169.254.0.1",
+				VRFName:    "vrf0",
+				VRFTable:   100,
+				EnableIPv4: true,
 			}),
 			expectError: false,
 		},
@@ -151,9 +149,8 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFName:               "vrf0",
-				EnableIPv4:            true,
-				DummyGatewayAddressV4: "169.254.0.1",
+				VRFName:    "vrf0",
+				EnableIPv4: true,
 			}),
 		},
 		{
@@ -164,28 +161,25 @@ func TestLoadNetConf(t *testing.T) {
 						Type: "foo",
 					},
 				},
-				VRFTable:              100,
-				EnableIPv4:            true,
-				DummyGatewayAddressV4: "169.254.0.1",
+				VRFTable:   100,
+				EnableIPv4: true,
 			}),
 			expectError: true,
 		},
 		{
 			name: "invalid missing IPAM config",
 			config: marshalConf(t, &NetConf{
-				VRFName:               "vrf0",
-				VRFTable:              100,
-				EnableIPv4:            true,
-				DummyGatewayAddressV4: "169.254.0.1",
+				VRFName:    "vrf0",
+				VRFTable:   100,
+				EnableIPv4: true,
 			}),
 			expectError: true,
 		},
 		{
 			name: "invalid missing enableIPv4 and enableIPv6",
 			config: marshalConf(t, &NetConf{
-				VRFName:               "vrf0",
-				VRFTable:              100,
-				DummyGatewayAddressV4: "169.254.0.1",
+				VRFName:  "vrf0",
+				VRFTable: 100,
 			}),
 			expectError: true,
 		},
@@ -745,7 +739,7 @@ func TestCNIAddDel(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
 						var v4NH net.IP
 						if netConf.EnableIPv4 {
-							v4NH = net.ParseIP(netConf.DummyGatewayAddressV4)
+							v4NH = dummyGatewayAddressV4
 						}
 
 						for _, route := range addResult.Routes {
@@ -769,7 +763,7 @@ func TestCNIAddDel(t *testing.T) {
 				t.Run("Route to the IPv4 dummy gateway address is instantiated", func(t *testing.T) {
 					err = c.ExecFuncInTestingNS(ctx, func(_ ns.NetNS) error {
 						if netConf.EnableIPv4 {
-							rt, ok := containerRoutes[netConf.DummyGatewayAddressV4+"/32"]
+							rt, ok := containerRoutes[dummyGatewayAddressV4.String()+"/32"]
 							require.True(t, ok, "IPv4 route to the dummy gateway address is missing")
 							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv4 route to the dummy gateway address is not bounded to the interface")
 							require.Nil(t, rt.Gw, "IPv4 route to the dummy gateway address must not have a gateway")

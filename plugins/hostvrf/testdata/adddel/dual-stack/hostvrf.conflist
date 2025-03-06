@@ -8,8 +8,6 @@
 			"enableIPv4": true,
 			"enableIPv6": true,
 			"egressNATMode": "hostip",
-			"dummyGatewayAddressV4": "169.254.0.1",
-			"dummyGatewayAddressV6": "fd00::1",
 			"ipam": {
 				"type": "static",
 				"addresses": [
