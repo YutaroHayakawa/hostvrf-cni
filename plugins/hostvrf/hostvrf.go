@@ -15,14 +15,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net"
 	"runtime"
+	"time"
 
 	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"
+	"sigs.k8s.io/knftables"
 
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
@@ -43,6 +47,7 @@ type NetConf struct {
 	ProtocolID            uint8  `json:"protocolID"`
 	EnableIPv4            bool   `json:"enableIPv4"`
 	EnableIPv6            bool   `json:"enableIPv6"`
+	EgressNATMode         string `json:"egressNATMode"`
 	DummyGatewayAddressV4 string `json:"dummyGatewayAddressV4"`
 
 	// Private fields used internally. Filled at the load time.
@@ -54,6 +59,13 @@ const (
 
 	// The protocol ID which is not reserved in the /etc/iproute2/rt_protos by default
 	defaultProtocolID = 31
+
+	// EgressNATModes
+	egressNATModeDisabled = "disabled"
+	egressNATModeHostIP   = "hostip"
+
+	// Default priority for the egress NAT ip rule
+	egressNATRulePriority = 999
 )
 
 func init() {
@@ -77,12 +89,22 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 		return nil, "", fmt.Errorf("vrfName is required")
 	}
 
+	// The maximum table ID is 65535 (16bit) because we encode the table ID
+	// into the conntrack zone which is 16bit.
+	if n.VRFTable > math.MaxUint16 {
+		return nil, "", fmt.Errorf("vrfTable must be less than or equal to %d", math.MaxUint16)
+	}
+
 	if n.ProtocolID == 0 {
 		n.ProtocolID = defaultProtocolID
 	}
 
 	if !n.EnableIPv4 && !n.EnableIPv6 {
 		return nil, "", fmt.Errorf("either IPv4 or IPv6 must be enabled")
+	}
+
+	if n.EgressNATMode == "" {
+		n.EgressNATMode = egressNATModeHostIP
 	}
 
 	if n.DummyGatewayAddressV4 == "" {
@@ -145,8 +167,10 @@ func findFreeTable(requestedTable uint32) (uint32, error) {
 	}
 
 	// Table 255 is local table. There's no reserved table for >= 256.
-	// Therefore, we'll start from 256.
-	for i := uint32(256); i < math.MaxUint32; i++ {
+	// Therefore, we'll start from 256. The maximum table ID is 65535
+	// (16bit) because we encode the table ID into the conntrack zone which
+	// is 16bit.
+	for i := uint32(256); i <= math.MaxUint16; i++ {
 		found, err := hasRoute(uint32(i))
 		if err != nil {
 			return 0, err
@@ -560,6 +584,170 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, hostInterface, containerInterf
 	})
 }
 
+func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	var family knftables.Family
+
+	switch {
+	case n.EnableIPv4 && n.EnableIPv6:
+		family = knftables.InetFamily
+	case n.EnableIPv4:
+		family = knftables.IPv4Family
+	case n.EnableIPv6:
+		family = knftables.IPv6Family
+	}
+
+	iface, err := knftables.New(family, "hostvrf-"+n.VRFName)
+	if err != nil {
+		return err
+	}
+
+	tx := iface.NewTransaction()
+
+	// Ensure table
+	tx.Add(&knftables.Table{})
+
+	// This flush doesn't disrupt the traffic since the iface.Run
+	// uses nft -f internally and the operation is atomic.
+	tx.Flush(&knftables.Table{})
+
+	// This rule sets the conntrack zone for the traffic originated from
+	// this VRF. We need this rule because we may have an overlapping IP
+	// range among VRFs and we may end up having conflicting conntrack
+	// entries. This rule should be set regardless of any settings.
+	chain := &knftables.Chain{
+		Name:     "raw-prerouting",
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.PreroutingHook),
+		Priority: knftables.PtrTo(knftables.RawPriority),
+	}
+	tx.Add(chain)
+	tx.Add(&knftables.Rule{
+		Chain: chain.Name,
+		Rule: knftables.Concat(
+			"ct zone set", vrf.Table,
+			"iif", vrf.Name,
+		),
+	})
+
+	// Setup Egress NAT
+	switch n.EgressNATMode {
+	case egressNATModeDisabled:
+		// Nothing to do
+	case egressNATModeHostIP:
+		// This rule masquerades the packets that leaving this VRF. At
+		// the same time, it sets the ct mark to indicate which VRF the
+		// connection belongs to. This mark will be used by ip rule in
+		// the reply path to lookup this VRF's FIB.
+		chain = &knftables.Chain{
+			Name:     "nat-postrouting",
+			Type:     knftables.PtrTo(knftables.NATType),
+			Hook:     knftables.PtrTo(knftables.PostroutingHook),
+			Priority: knftables.PtrTo(knftables.SNATPriority),
+		}
+		tx.Add(chain)
+		tx.Add(&knftables.Rule{
+			Chain: chain.Name,
+			Rule: knftables.Concat(
+				"iif", vrf.Name,
+				"oif !=", vrf.Name,
+				"meta l4proto {tcp, udp}",
+				"ct mark set", vrf.Table,
+				"counter",
+				"masquerade",
+			),
+		})
+
+		// This rule binds reply of the masqueraded traffic to the VRF
+		// by setting the mark. We don't need zone for this reply
+		// traffic, because the host IP address + port tuple + protocol
+		// tuple is unique. This mark will be used by the ip rules to
+		// lookup the VRF's routing table.
+		chain = &knftables.Chain{
+			Name:     "mangle-prerouting",
+			Type:     knftables.PtrTo(knftables.FilterType),
+			Hook:     knftables.PtrTo(knftables.PreroutingHook),
+			Priority: knftables.PtrTo(knftables.ManglePriority),
+		}
+		tx.Add(chain)
+		tx.Add(&knftables.Rule{
+			Chain: chain.Name,
+			Rule: knftables.Concat(
+				"iif !=", vrf.Name,
+				"meta l4proto {tcp, udp}",
+				"ct mark", vrf.Table,
+				"counter",
+				"meta mark set", vrf.Table,
+			),
+		})
+
+	default:
+		return fmt.Errorf("BUG: Unknown egressNATMode")
+	}
+
+	return iface.Run(ctx, tx)
+}
+
+func ensureEgressNATIPRules(n *NetConf, vrf *netlink.Vrf) error {
+	if n.EgressNATMode != egressNATModeHostIP {
+		return nil
+	}
+
+	for _, family := range []int{netlink.FAMILY_V4, netlink.FAMILY_V6} {
+		// This rule works in conjunction with the nftables rule in the reply
+		// path of the masqueraded packet to lookup this VRF's table when
+		// there's specific mark (inherited from the ct mark added in the
+		// origin path).
+		desiredRule := &netlink.Rule{
+			Family: family,
+			// This must be lower (prioritized) than main table
+			// lookup. For the moment, it is set closer to VRF
+			// table lookup (l3mdev rule is priority 1000). Make
+			// this configurable if needed.
+			Priority: egressNATRulePriority,
+			// Mark == TableID
+			Table: int(vrf.Table),
+			Mark:  uint32(vrf.Table),
+			// We need these ugly workarounds because 0 are valid
+			// values for these fields. We need to set these fields
+			// to -1 to ensure that they are not used in the rule.
+			Flow:              -1,
+			Goto:              -1,
+			SuppressIfgroup:   -1,
+			SuppressPrefixlen: -1,
+			// Type will be mapped to the Action in the lower level
+			Type:     nl.FR_ACT_TO_TBL,
+			Protocol: n.ProtocolID,
+		}
+
+		rules, err := netlink.RuleListFiltered(
+			family,
+			desiredRule,
+			netlink.RT_FILTER_PRIORITY|netlink.RT_FILTER_TABLE|netlink.RT_FILTER_MARK,
+		)
+		if err != nil {
+			return fmt.Errorf("list failed: %w", err)
+		}
+		if len(rules) != 1 {
+			// If == 0, it's normal, but if > 1, something wrong is going
+			// on here. Delete rules to ensure there's only one rule.
+			for _, rule := range rules {
+				if err := netlink.RuleDel(&rule); err != nil {
+					return fmt.Errorf("delete failed: %w", err)
+				}
+			}
+
+			if err := netlink.RuleAdd(desiredRule); err != nil {
+				return fmt.Errorf("add failed: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func cmdAdd(args *skel.CmdArgs) error {
 	success := false
 
@@ -628,6 +816,16 @@ func cmdAdd(args *skel.CmdArgs) error {
 	// Make host -> container connectivity
 	if err = ensureContainerRoutes(n, vrf, hostInterface, result); err != nil {
 		return fmt.Errorf("failed to setup host to container routes: %w", err)
+	}
+
+	// Ensure nftables rules
+	if err = ensureNFTRules(n, vrf); err != nil {
+		return fmt.Errorf("failed to setup nftables rules: %w", err)
+	}
+
+	// Ensure ip rule required for EgressNAT
+	if err = ensureEgressNATIPRules(n, vrf); err != nil {
+		return fmt.Errorf("failed to setup ip rules for egress NAT: %w", err)
 	}
 
 	// Use incoming DNS settings if provided, otherwise use the

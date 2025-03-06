@@ -1,0 +1,6 @@
+table ip hostvrf-vrf0 {
+	chain raw-prerouting {
+		type filter hook prerouting priority raw; policy accept;
+		ct zone set 100 iif "vrf0"
+	}
+}

@@ -1,7 +1,7 @@
 FROM golang:1.24.0-bookworm
 
 # Install dependencies
-RUN apt update && apt install -y iproute2
+RUN apt update && apt install -y iproute2 nftables
 RUN go install github.com/containernetworking/cni/cnitool@v1.2.3
 RUN go install github.com/containernetworking/plugins/plugins/ipam/static@v1.6.1
 

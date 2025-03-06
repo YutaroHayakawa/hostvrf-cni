@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+	"sigs.k8s.io/knftables"
 )
 
 func marshalConf(t *testing.T, n *NetConf) []byte {
@@ -772,6 +773,88 @@ func TestCNIAddDel(t *testing.T) {
 							require.True(t, ok, "IPv4 route to the dummy gateway address is missing")
 							require.Equal(t, containerVeth.Index, rt.LinkIndex, "IPv4 route to the dummy gateway address is not bounded to the interface")
 							require.Nil(t, rt.Gw, "IPv4 route to the dummy gateway address must not have a gateway")
+						}
+						return nil
+					})
+				})
+
+				t.Run("NFTables rules are configured", func(t *testing.T) {
+					var family string
+
+					switch {
+					case netConf.EnableIPv4 && netConf.EnableIPv6:
+						family = "inet"
+					case netConf.EnableIPv4:
+						family = "ip"
+					case netConf.EnableIPv6:
+						family = "ip6"
+					}
+
+					stdout, stderr, err := c.Exec(ctx, []string{"nft", "list", "table", family, "hostvrf-vrf0"})
+					require.NoError(t, err, "stdout: %s\nstderr: %s", stdout.String(), stderr.String())
+
+					expectedRules, err := os.ReadFile(baseDir + "/nft.txt")
+					require.NoError(t, err)
+
+					require.Equal(t, string(expectedRules), stdout.String())
+				})
+
+				t.Run("ip rules for the EgressNAT are configured", func(t *testing.T) {
+					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
+						if netConf.EgressNATMode != egressNATModeHostIP {
+							return nil
+						}
+						if netConf.EnableIPv4 {
+							rules, err := netlink.RuleListFiltered(
+								netlink.FAMILY_V4,
+								&netlink.Rule{
+									Priority: egressNATRulePriority,
+								},
+								netlink.RT_FILTER_PRIORITY,
+							)
+							require.NoError(t, err)
+							require.Len(t, rules, 1, "IPv4 rule for the EgressNAT is missing")
+
+							expectedRule := netlink.Rule{
+								Priority:          egressNATRulePriority,
+								Family:            netlink.FAMILY_V4,
+								Table:             int(vrf.Table),
+								Mark:              uint32(vrf.Table),
+								Mask:              knftables.PtrTo(uint32(0xFFFFFFFF)),
+								Goto:              -1,
+								Flow:              -1,
+								SuppressIfgroup:   -1,
+								SuppressPrefixlen: -1,
+								Protocol:          uint8(defaultProtocolID),
+								Type:              0, // FIXME: This should be set to 1 (nl.FR_ACT_TO_TBL). This is a bug in the netlink library.
+							}
+							require.Equal(t, expectedRule, rules[0], "Unexpected rule for the IPv4 rule for the EgressNAT")
+						}
+						if netConf.EnableIPv6 {
+							rules, err := netlink.RuleListFiltered(
+								netlink.FAMILY_V6,
+								&netlink.Rule{
+									Priority: egressNATRulePriority,
+								},
+								netlink.RT_FILTER_PRIORITY,
+							)
+							require.NoError(t, err)
+							require.Len(t, rules, 1, "IPv6 rule for the EgressNAT is missing")
+
+							expectedRule := netlink.Rule{
+								Priority:          egressNATRulePriority,
+								Family:            netlink.FAMILY_V6,
+								Table:             int(vrf.Table),
+								Mark:              uint32(vrf.Table),
+								Mask:              knftables.PtrTo(uint32(0xFFFFFFFF)),
+								Goto:              -1,
+								Flow:              -1,
+								SuppressIfgroup:   -1,
+								SuppressPrefixlen: -1,
+								Protocol:          uint8(defaultProtocolID),
+								Type:              0, // FIXME: This should be set to 1 (nl.FR_ACT_TO_TBL). This is a bug in the netlink library.
+							}
+							require.Equal(t, expectedRule, rules[0], "Unexpected rule for the IPv6 rule for the EgressNAT")
 						}
 						return nil
 					})
