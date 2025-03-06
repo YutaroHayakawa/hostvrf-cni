@@ -8,7 +8,7 @@ require (
 	github.com/docker/docker v28.0.0+incompatible
 	github.com/stretchr/testify v1.10.0
 	github.com/vishvananda/netlink v1.3.0
-	golang.org/x/sys v0.30.0
+	golang.org/x/sys v0.31.0
 )
 
 require (
