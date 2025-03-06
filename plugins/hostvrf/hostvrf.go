@@ -655,7 +655,6 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 				"oif !=", vrf.Name,
 				"meta l4proto {tcp, udp}",
 				"ct mark set", vrf.Table,
-				"counter",
 				"masquerade",
 			),
 		})
@@ -667,7 +666,6 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 					"oif !=", vrf.Name,
 					"meta l4proto icmp icmp type {echo-request, echo-reply}",
 					"ct mark set", vrf.Table,
-					"counter",
 					"masquerade",
 				),
 			})
@@ -680,7 +678,6 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 					"oif !=", vrf.Name,
 					"meta l4proto icmpv6 icmpv6 type {echo-request, echo-reply}",
 					"ct mark set", vrf.Table,
-					"counter",
 					"masquerade",
 				),
 			})
@@ -690,7 +687,6 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 			Rule: knftables.Concat(
 				"iif", vrf.Name,
 				"oif !=", vrf.Name,
-				"counter",
 				"drop",
 			),
 		})
@@ -713,7 +709,6 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 				"iif !=", vrf.Name,
 				"meta l4proto {tcp, udp}",
 				"ct mark", vrf.Table,
-				"counter",
 				"meta mark set", vrf.Table,
 			),
 		})
@@ -724,7 +719,6 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 					"iif !=", vrf.Name,
 					"meta l4proto icmp icmp type {echo-request, echo-reply}",
 					"ct mark", vrf.Table,
-					"counter",
 					"meta mark set", vrf.Table,
 				),
 			})
@@ -736,7 +730,6 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 					"iif !=", vrf.Name,
 					"meta l4proto icmpv6 icmpv6 type {echo-request, echo-reply}",
 					"ct mark", vrf.Table,
-					"counter",
 					"meta mark set", vrf.Table,
 				),
 			})
