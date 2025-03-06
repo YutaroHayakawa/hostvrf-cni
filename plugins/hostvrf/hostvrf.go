@@ -103,7 +103,9 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 	}
 
 	if !n.EnableIPv4 && !n.EnableIPv6 {
-		return nil, "", fmt.Errorf("either IPv4 or IPv6 must be enabled")
+		// If both are disabled, enable both by default
+		n.EnableIPv4 = true
+		n.EnableIPv6 = true
 	}
 
 	if n.EgressNATMode == "" {
