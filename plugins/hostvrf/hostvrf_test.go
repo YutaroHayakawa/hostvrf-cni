@@ -662,6 +662,13 @@ func TestCNIAddDel(t *testing.T) {
 				})
 
 				t.Run("Unreachable routes are configured", func(t *testing.T) {
+					switch netConf.IsolationMode {
+					case isolationModeFallthrough:
+						return
+					case isolationModeIsolated:
+					default:
+						t.Fatalf("Uncovered isolation mode: %q", netConf.IsolationMode)
+					}
 					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
 						if netConf.EnableIPv4 {
 							rt, ok := vrfRoutes["0.0.0.0/0"]
@@ -896,38 +903,88 @@ func TestCNIAddDel(t *testing.T) {
 							table = 257
 						}
 						if netConf.EnableIPv4 {
-							routes := map[string]netlink.Route{}
-							err := netlink.RouteListFilteredIter(
+							for _, result := range addResult.IPs {
+								if result.Address.IP.To4() == nil {
+									continue
+								}
+								routes, err := netlink.RouteListFiltered(
+									netlink.FAMILY_V4,
+									&netlink.Route{
+										Table: int(table),
+										Dst:   &result.Address,
+									},
+									netlink.RT_FILTER_TABLE|netlink.RT_FILTER_DST,
+								)
+								require.NoError(t, err)
+								require.Empty(t, routes, "Direct route to the IP %q is still exists", result.Address)
+							}
+						}
+						if netConf.EnableIPv6 {
+							for _, result := range addResult.IPs {
+								if result.Address.IP.To4() != nil {
+									continue
+								}
+								routes, err := netlink.RouteListFiltered(
+									netlink.FAMILY_V6,
+									&netlink.Route{
+										Table: int(table),
+										Dst:   &result.Address,
+									},
+									netlink.RT_FILTER_TABLE|netlink.RT_FILTER_DST,
+								)
+								require.NoError(t, err)
+								require.Empty(t, routes, "Direct route to the IP %q is still exists", result.Address)
+							}
+						}
+						return nil
+					})
+				})
+
+				t.Run("Unreachable routes are still configured", func(t *testing.T) {
+					switch netConf.IsolationMode {
+					case isolationModeFallthrough:
+						return
+					case isolationModeIsolated:
+					default:
+						t.Fatalf("Uncovered isolation mode: %q", netConf.IsolationMode)
+					}
+					err = c.ExecFunc(ctx, func(_ ns.NetNS) error {
+						table := netConf.VRFTable
+						if table == 0 {
+							// Dynamic allocation case
+							table = 257
+						}
+						if netConf.EnableIPv4 {
+							routes, err := netlink.RouteListFiltered(
 								netlink.FAMILY_V4,
 								&netlink.Route{
 									Table: int(table),
+									Dst: &net.IPNet{
+										IP:   net.IPv4zero,
+										Mask: net.CIDRMask(0, 32),
+									},
 								},
-								netlink.RT_FILTER_TABLE,
-								func(rt netlink.Route) bool {
-									routes[rt.Dst.String()] = rt
-									return true
-								},
+								netlink.RT_FILTER_TABLE|netlink.RT_FILTER_DST,
 							)
 							require.NoError(t, err)
-							require.Len(t, routes, 1, "Unexpected number of IPv4 routes are left")
-							require.Contains(t, routes, "0.0.0.0/0", "Unreachable default route is missing after DEL")
+							require.Len(t, routes, 1, "Unreachable default route for IPv4 is missing")
+							require.Equal(t, unix.RTN_UNREACHABLE, routes[0].Type, "Unreachable default route for IPv4 is not unreachable")
 						}
 						if netConf.EnableIPv6 {
-							routes := map[string]netlink.Route{}
-							err := netlink.RouteListFilteredIter(
+							routes, err := netlink.RouteListFiltered(
 								netlink.FAMILY_V6,
 								&netlink.Route{
 									Table: int(table),
+									Dst: &net.IPNet{
+										IP:   net.IPv6zero,
+										Mask: net.CIDRMask(0, 128),
+									},
 								},
-								netlink.RT_FILTER_TABLE,
-								func(rt netlink.Route) bool {
-									routes[rt.Dst.String()] = rt
-									return true
-								},
+								netlink.RT_FILTER_TABLE|netlink.RT_FILTER_DST,
 							)
 							require.NoError(t, err)
-							require.Len(t, routes, 1, "Unexpected number of IPv6 routes are left")
-							require.Contains(t, routes, "::/0", "Unreachable default route is missing after DEL")
+							require.Len(t, routes, 1, "Unreachable default route for IPv6 is missing")
+							require.Equal(t, unix.RTN_UNREACHABLE, routes[0].Type, "Unreachable default route for IPv6 is not unreachable")
 						}
 						return nil
 					})

@@ -8,6 +8,7 @@
 			"enableIPv4": true,
 			"enableIPv6": true,
 			"egressNATMode": "hostip",
+			"isolationMode": "isolated",
 			"ipam": {
 				"type": "static",
 				"addresses": [

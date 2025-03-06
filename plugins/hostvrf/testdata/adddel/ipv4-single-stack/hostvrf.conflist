@@ -8,6 +8,7 @@
 			"vrfTable": 100,
 			"enableIPv4": true,
 			"egressNATMode": "disabled",
+			"isolationMode": "fallthrough",
 			"ipam": {
 				"type": "static",
 				"addresses": [

@@ -48,6 +48,7 @@ type NetConf struct {
 	EnableIPv4    bool   `json:"enableIPv4"`
 	EnableIPv6    bool   `json:"enableIPv6"`
 	EgressNATMode string `json:"egressNATMode"`
+	IsolationMode string `json:"isolationMode"`
 }
 
 var (
@@ -64,6 +65,10 @@ const (
 
 	// Default priority for the egress NAT ip rule
 	egressNATRulePriority = 999
+
+	// IsolationModes
+	isolationModeFallthrough = "fallthrough"
+	isolationModeIsolated    = "isolated"
 )
 
 func init() {
@@ -103,6 +108,10 @@ func loadNetConf(data []byte) (*NetConf, string, error) {
 
 	if n.EgressNATMode == "" {
 		n.EgressNATMode = egressNATModeHostIP
+	}
+
+	if n.IsolationMode == "" {
+		n.IsolationMode = isolationModeFallthrough
 	}
 
 	return n, n.CNIVersion, nil
@@ -240,6 +249,10 @@ func ensureVRF(name string, requestedTable uint32) (*netlink.Vrf, error) {
 // FRR: https://docs.frrouting.org/en/latest/zebra.html#administrative-distance
 // Linux VRF: https://www.kernel.org/doc/Documentation/networking/vrf.txt
 func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
+	if n.IsolationMode != isolationModeIsolated {
+		return nil
+	}
+
 	if n.EnableIPv4 {
 		if err := netlink.RouteReplace(&netlink.Route{
 			Dst: &net.IPNet{
