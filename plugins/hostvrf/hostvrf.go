@@ -685,6 +685,15 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 				),
 			})
 		}
+		tx.Add(&knftables.Rule{
+			Chain: chain.Name,
+			Rule: knftables.Concat(
+				"iif", vrf.Name,
+				"oif !=", vrf.Name,
+				"counter",
+				"drop",
+			),
+		})
 
 		// This rule binds reply of the masqueraded traffic to the VRF
 		// by setting the mark. We don't need zone for this reply
