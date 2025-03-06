@@ -8,7 +8,6 @@
 			"vrfTable": 100,
 			"enableIPv6": true,
 			"egressNATMode": "hostip",
-			"dummyGatewayAddressV6": "fd00::1",
 			"ipam": {
 				"type": "static",
 				"addresses": [
