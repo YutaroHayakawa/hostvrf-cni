@@ -7,10 +7,12 @@ table ip6 hostvrf-vrf0 {
 	chain nat-postrouting {
 		type nat hook postrouting priority srcnat; policy accept;
 		iif "vrf0" oif != "vrf0" meta l4proto { tcp, udp } ct mark set 0x00000064 counter packets 0 bytes 0 masquerade
+		iif "vrf0" oif != "vrf0" icmpv6 type { echo-request, echo-reply } ct mark set 0x00000064 counter packets 0 bytes 0 masquerade
 	}
 
 	chain mangle-prerouting {
 		type filter hook prerouting priority mangle; policy accept;
 		iif != "vrf0" meta l4proto { tcp, udp } ct mark 0x00000064 counter packets 0 bytes 0 meta mark set 0x00000064
+		iif != "vrf0" icmpv6 type { echo-request, echo-reply } ct mark 0x00000064 counter packets 0 bytes 0 meta mark set 0x00000064
 	}
 }

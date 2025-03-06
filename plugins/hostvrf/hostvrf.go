@@ -659,6 +659,32 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 				"masquerade",
 			),
 		})
+		if family == knftables.IPv4Family || family == knftables.InetFamily {
+			tx.Add(&knftables.Rule{
+				Chain: chain.Name,
+				Rule: knftables.Concat(
+					"iif", vrf.Name,
+					"oif !=", vrf.Name,
+					"meta l4proto icmp icmp type {echo-request, echo-reply}",
+					"ct mark set", vrf.Table,
+					"counter",
+					"masquerade",
+				),
+			})
+		}
+		if family == knftables.IPv6Family || family == knftables.InetFamily {
+			tx.Add(&knftables.Rule{
+				Chain: chain.Name,
+				Rule: knftables.Concat(
+					"iif", vrf.Name,
+					"oif !=", vrf.Name,
+					"meta l4proto icmpv6 icmpv6 type {echo-request, echo-reply}",
+					"ct mark set", vrf.Table,
+					"counter",
+					"masquerade",
+				),
+			})
+		}
 
 		// This rule binds reply of the masqueraded traffic to the VRF
 		// by setting the mark. We don't need zone for this reply
@@ -682,6 +708,30 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 				"meta mark set", vrf.Table,
 			),
 		})
+		if family == knftables.IPv4Family || family == knftables.InetFamily {
+			tx.Add(&knftables.Rule{
+				Chain: chain.Name,
+				Rule: knftables.Concat(
+					"iif !=", vrf.Name,
+					"meta l4proto icmp icmp type {echo-request, echo-reply}",
+					"ct mark", vrf.Table,
+					"counter",
+					"meta mark set", vrf.Table,
+				),
+			})
+		}
+		if family == knftables.IPv6Family || family == knftables.InetFamily {
+			tx.Add(&knftables.Rule{
+				Chain: chain.Name,
+				Rule: knftables.Concat(
+					"iif !=", vrf.Name,
+					"meta l4proto icmpv6 icmpv6 type {echo-request, echo-reply}",
+					"ct mark", vrf.Table,
+					"counter",
+					"meta mark set", vrf.Table,
+				),
+			})
+		}
 
 	default:
 		return fmt.Errorf("BUG: Unknown egressNATMode")
