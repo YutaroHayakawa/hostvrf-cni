@@ -187,7 +187,7 @@ func TestLoadNetConf(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, err := loadNetConf(test.config)
+			_, _, err := loadNetConf("hostvrf", test.config)
 			if test.expectError {
 				require.Error(t, err)
 			} else {
@@ -488,7 +488,7 @@ func TestCNIAddDel(t *testing.T) {
 			err = readJSONFile(netConfFile, &confList)
 			require.NoError(t, err)
 
-			netConf, _, err := loadNetConf(confList.Plugins[0])
+			netConf, _, err := loadNetConf("hostvrf", confList.Plugins[0])
 			require.NoError(t, err)
 
 			err = c.Copy(ctx, "hostvrf", "hostvrf", "/go/bin")

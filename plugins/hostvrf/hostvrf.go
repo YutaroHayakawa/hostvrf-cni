@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/vishvananda/netlink"
@@ -51,6 +53,13 @@ type NetConf struct {
 	IsolationMode string `json:"isolationMode"`
 }
 
+type NetConfBridge struct {
+	types.NetConf
+
+	Bridge string `json:"bridge"`
+	IPMasq bool   `json:"ipMasq"`
+}
+
 var (
 	dummyGatewayAddressV4 = net.IPv4(169, 254, 0, 1)
 )
@@ -78,10 +87,56 @@ func init() {
 	runtime.LockOSThread()
 }
 
-func loadNetConf(data []byte) (*NetConf, string, error) {
+func loadNetConfBridge(data []byte) (*NetConf, error) {
+	n := &NetConfBridge{}
+	if err := json.Unmarshal(data, n); err != nil {
+		return nil, err
+	}
+
+	egressNATMode := egressNATModeDisabled
+	if n.IPMasq {
+		egressNATMode = egressNATModeHostIP
+	}
+
+	return &NetConf{
+		NetConf:       n.NetConf,
+		VRFName:       n.Bridge,
+		EgressNATMode: egressNATMode,
+	}, nil
+}
+
+func loadNetConfHostVRF(data []byte) (*NetConf, error) {
 	n := &NetConf{}
 	if err := json.Unmarshal(data, n); err != nil {
-		return nil, "", err
+		return nil, err
+	}
+	return n, nil
+}
+
+func modeFromOSArgs() string {
+	s := strings.Split(os.Args[0], "/")
+	return s[len(s)-1]
+}
+
+func loadNetConf(mode string, data []byte) (*NetConf, string, error) {
+	var (
+		n   *NetConf
+		err error
+	)
+
+	switch mode {
+	case "hostvrf":
+		n, err = loadNetConfHostVRF(data)
+		if err != nil {
+			return nil, "", err
+		}
+	case "bridge":
+		n, err = loadNetConfBridge(data)
+		if err != nil {
+			return nil, "", err
+		}
+	default:
+		return nil, "", fmt.Errorf("unknown mode: %s", mode)
 	}
 
 	if n.IPAM.Type == "" {
@@ -803,7 +858,7 @@ func ensureEgressNATIPRules(n *NetConf, vrf *netlink.Vrf) error {
 func cmdAdd(args *skel.CmdArgs) error {
 	success := false
 
-	n, _, err := loadNetConf(args.StdinData)
+	n, _, err := loadNetConf(modeFromOSArgs(), args.StdinData)
 	if err != nil {
 		return fmt.Errorf("failed to parse config: %w", err)
 	}
@@ -899,7 +954,7 @@ func dnsConfSet(dnsConf types.DNS) bool {
 }
 
 func cmdDel(args *skel.CmdArgs) error {
-	n, _, err := loadNetConf(args.StdinData)
+	n, _, err := loadNetConf(modeFromOSArgs(), args.StdinData)
 	if err != nil {
 		return err
 	}
