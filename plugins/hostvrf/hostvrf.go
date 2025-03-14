@@ -25,13 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vishvananda/netlink"
-	"github.com/vishvananda/netlink/nl"
-	"golang.org/x/sys/unix"
-	"sigs.k8s.io/knftables"
-
 	"github.com/containernetworking/cni/pkg/skel"
-	"github.com/containernetworking/cni/pkg/types"
+	cniTypes "github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/cni/pkg/version"
 	"github.com/containernetworking/plugins/pkg/ip"
@@ -39,22 +34,16 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/utils/buildversion"
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
+	"github.com/vishvananda/netlink"
+	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
+	"sigs.k8s.io/knftables"
+
+	"github.com/YutaroHayakawa/hostvrf-cni/pkg/types"
 )
 
-type NetConf struct {
-	types.NetConf
-
-	VRFName       string `json:"vrfName"`
-	VRFTable      uint32 `json:"vrfTable"`
-	ProtocolID    uint8  `json:"protocolID"`
-	EnableIPv4    bool   `json:"enableIPv4"`
-	EnableIPv6    bool   `json:"enableIPv6"`
-	EgressNATMode string `json:"egressNATMode"`
-	IsolationMode string `json:"isolationMode"`
-}
-
 type NetConfBridge struct {
-	types.NetConf
+	cniTypes.NetConf
 
 	Bridge string `json:"bridge"`
 	IPMasq bool   `json:"ipMasq"`
@@ -87,7 +76,7 @@ func init() {
 	runtime.LockOSThread()
 }
 
-func loadNetConfBridge(data []byte) (*NetConf, error) {
+func loadNetConfBridge(data []byte) (*types.NetConf, error) {
 	n := &NetConfBridge{}
 	if err := json.Unmarshal(data, n); err != nil {
 		return nil, err
@@ -98,15 +87,15 @@ func loadNetConfBridge(data []byte) (*NetConf, error) {
 		egressNATMode = egressNATModeHostIP
 	}
 
-	return &NetConf{
+	return &types.NetConf{
 		NetConf:       n.NetConf,
 		VRFName:       n.Bridge,
 		EgressNATMode: egressNATMode,
 	}, nil
 }
 
-func loadNetConfHostVRF(data []byte) (*NetConf, error) {
-	n := &NetConf{}
+func loadNetConfHostVRF(data []byte) (*types.NetConf, error) {
+	n := &types.NetConf{}
 	if err := json.Unmarshal(data, n); err != nil {
 		return nil, err
 	}
@@ -118,9 +107,9 @@ func modeFromOSArgs() string {
 	return s[len(s)-1]
 }
 
-func loadNetConf(mode string, data []byte) (*NetConf, string, error) {
+func loadNetConf(mode string, data []byte) (*types.NetConf, string, error) {
 	var (
-		n   *NetConf
+		n   *types.NetConf
 		err error
 	)
 
@@ -305,7 +294,7 @@ func ensureVRF(name string, requestedTable uint32) (*netlink.Vrf, error) {
 //
 // FRR: https://docs.frrouting.org/en/latest/zebra.html#administrative-distance
 // Linux VRF: https://www.kernel.org/doc/Documentation/networking/vrf.txt
-func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
+func ensureUnreachableDefaultRoutes(n *types.NetConf, vrf *netlink.Vrf) error {
 	if n.IsolationMode != isolationModeIsolated {
 		return nil
 	}
@@ -343,7 +332,7 @@ func ensureUnreachableDefaultRoutes(n *NetConf, vrf *netlink.Vrf) error {
 	return nil
 }
 
-func setupVRF(n *NetConf) (*netlink.Vrf, *current.Interface, error) {
+func setupVRF(n *types.NetConf) (*netlink.Vrf, *current.Interface, error) {
 	// create VRF if necessary
 	vrf, err := ensureVRF(n.VRFName, n.VRFTable)
 	if err != nil {
@@ -361,7 +350,7 @@ func setupVRF(n *NetConf) (*netlink.Vrf, *current.Interface, error) {
 	}, nil
 }
 
-func setHostVethSysctls(n *NetConf, hostVethLink netlink.Link) error {
+func setHostVethSysctls(n *types.NetConf, hostVethLink netlink.Link) error {
 	if n.EnableIPv4 {
 		// Setup proxy-arp to the host interface
 		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv4/conf/%s/proxy_arp", hostVethLink.Attrs().Name), "1"); err != nil {
@@ -399,7 +388,7 @@ func setHostVethSysctls(n *NetConf, hostVethLink netlink.Link) error {
 	return nil
 }
 
-func setContainerVethSysctls(n *NetConf, containerVethLink netlink.Link) error {
+func setContainerVethSysctls(n *types.NetConf, containerVethLink netlink.Link) error {
 	if n.EnableIPv6 {
 		// Disable IPv6 DAD. We don't need this because this is a point to point link.
 		if _, err := sysctl.Sysctl(fmt.Sprintf("net/ipv6/conf/%s/accept_dad", containerVethLink.Attrs().Name), "0"); err != nil {
@@ -414,7 +403,7 @@ func setContainerVethSysctls(n *NetConf, containerVethLink netlink.Link) error {
 	return nil
 }
 
-func setDummyGatewayAddressV4(n *NetConf, hostVethLink netlink.Link) error {
+func setDummyGatewayAddressV4(n *types.NetConf, hostVethLink netlink.Link) error {
 	// Assign link-scoped dummy gateway address to the host veth. We need
 	// to do this because proxy_arp only replies when the target address is
 	// reachable. Since we have a blackhole default route in the VRF table,
@@ -431,7 +420,7 @@ func setDummyGatewayAddressV4(n *NetConf, hostVethLink netlink.Link) error {
 	})
 }
 
-func createVeth(n *NetConf, netns ns.NetNS, vrf *netlink.Vrf, ifName string) (*current.Interface, *current.Interface, error) {
+func createVeth(n *types.NetConf, netns ns.NetNS, vrf *netlink.Vrf, ifName string) (*current.Interface, *current.Interface, error) {
 	contIface := &current.Interface{}
 	hostIface := &current.Interface{}
 
@@ -510,7 +499,7 @@ func createVeth(n *NetConf, netns ns.NetNS, vrf *netlink.Vrf, ifName string) (*c
 	return hostIface, contIface, nil
 }
 
-func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.Interface, result *current.Result) error {
+func ensureContainerRoutes(n *types.NetConf, vrf *netlink.Vrf, hostInterface *current.Interface, result *current.Result) error {
 	hostLink, err := netlink.LinkByName(hostInterface.Name)
 	if err != nil {
 		return err
@@ -552,7 +541,7 @@ func ensureContainerRoutes(n *NetConf, vrf *netlink.Vrf, hostInterface *current.
 	return nil
 }
 
-func getDummyGatewayAddresses(n *NetConf, hostInterface *current.Interface) (net.IP, net.IP, error) {
+func getDummyGatewayAddresses(n *types.NetConf, hostInterface *current.Interface) (net.IP, net.IP, error) {
 	hostVethLink, err := netlink.LinkByName(hostInterface.Name)
 	if err != nil {
 		return nil, nil, err
@@ -579,7 +568,7 @@ func getDummyGatewayAddresses(n *NetConf, hostInterface *current.Interface) (net
 	return v4Gw, v6Gw, nil
 }
 
-func ensureHostRoutes(n *NetConf, netns ns.NetNS, hostInterface, containerInterface *current.Interface, result *current.Result) error {
+func ensureHostRoutes(n *types.NetConf, netns ns.NetNS, hostInterface, containerInterface *current.Interface, result *current.Result) error {
 	// Get IPv4 and IPv6 dummy gateway addresses. For IPv4, it would be a
 	// configured one. For IPv6, it's a link local address of the host
 	// veth.
@@ -620,9 +609,9 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, hostInterface, containerInterf
 	// this into the beginning of the result.Routes slice because rest of
 	// the routes uses the dummy gateway address as a gateway, so the route
 	// should be present before the other routes.
-	dummyGatewayRoutes := []*types.Route{}
+	dummyGatewayRoutes := []*cniTypes.Route{}
 	if n.EnableIPv4 {
-		rt := &types.Route{
+		rt := &cniTypes.Route{
 			Dst: net.IPNet{
 				IP:   v4Gw,
 				Mask: net.CIDRMask(32, 32),
@@ -639,7 +628,7 @@ func ensureHostRoutes(n *NetConf, netns ns.NetNS, hostInterface, containerInterf
 	})
 }
 
-func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
+func ensureNFTRules(n *types.NetConf, vrf *netlink.Vrf) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
@@ -797,7 +786,7 @@ func ensureNFTRules(n *NetConf, vrf *netlink.Vrf) error {
 	return iface.Run(ctx, tx)
 }
 
-func ensureEgressNATIPRules(n *NetConf, vrf *netlink.Vrf) error {
+func ensureEgressNATIPRules(n *types.NetConf, vrf *netlink.Vrf) error {
 	if n.EgressNATMode != egressNATModeHostIP {
 		return nil
 	}
@@ -943,10 +932,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 
 	success = true
 
-	return types.PrintResult(result, n.CNIVersion)
+	return cniTypes.PrintResult(result, n.CNIVersion)
 }
 
-func dnsConfSet(dnsConf types.DNS) bool {
+func dnsConfSet(dnsConf cniTypes.DNS) bool {
 	return dnsConf.Nameservers != nil ||
 		dnsConf.Search != nil ||
 		dnsConf.Options != nil ||

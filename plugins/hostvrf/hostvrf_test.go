@@ -26,7 +26,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/containernetworking/cni/pkg/types"
+	"github.com/YutaroHayakawa/hostvrf-cni/pkg/types"
+
+	cniTypes "github.com/containernetworking/cni/pkg/types"
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
@@ -39,7 +41,7 @@ import (
 	"sigs.k8s.io/knftables"
 )
 
-func marshalConf(t *testing.T, n *NetConf) []byte {
+func marshalConf(t *testing.T, n *types.NetConf) []byte {
 	t.Helper()
 	data, err := json.Marshal(n)
 	if err != nil {
@@ -57,9 +59,9 @@ func TestLoadNetConf(t *testing.T) {
 	}{
 		{
 			name: "valid",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -72,9 +74,9 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "valid missing enableIPv4",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -86,9 +88,9 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "valid missing enableIPv6",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -100,9 +102,9 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "valid missing dummyGatewayAddressV4",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -114,9 +116,9 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "valid missing dummyGatewayAddressV6",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -128,9 +130,9 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "valid missing dummyGatewayAddressV4 and V6",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -143,9 +145,9 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "valid missing vrfTable",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -155,9 +157,9 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "invalid missing vrfName",
-			config: marshalConf(t, &NetConf{
-				NetConf: types.NetConf{
-					IPAM: types.IPAM{
+			config: marshalConf(t, &types.NetConf{
+				NetConf: cniTypes.NetConf{
+					IPAM: cniTypes.IPAM{
 						Type: "foo",
 					},
 				},
@@ -168,7 +170,7 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "invalid missing IPAM config",
-			config: marshalConf(t, &NetConf{
+			config: marshalConf(t, &types.NetConf{
 				VRFName:    "vrf0",
 				VRFTable:   100,
 				EnableIPv4: true,
@@ -177,7 +179,7 @@ func TestLoadNetConf(t *testing.T) {
 		},
 		{
 			name: "invalid missing enableIPv4 and enableIPv6",
-			config: marshalConf(t, &NetConf{
+			config: marshalConf(t, &types.NetConf{
 				VRFName:  "vrf0",
 				VRFTable: 100,
 			}),
