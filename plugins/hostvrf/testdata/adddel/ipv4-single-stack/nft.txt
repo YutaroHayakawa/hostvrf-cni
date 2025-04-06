@@ -3,4 +3,9 @@ table ip hostvrf-vrf0 {
 		type filter hook prerouting priority raw; policy accept;
 		ct zone set 100 iif "vrf0"
 	}
+
+	chain raw-output {
+		type filter hook output priority raw; policy accept;
+		ct zone set 100 oif "vrf0"
+	}
 }

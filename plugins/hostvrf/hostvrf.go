@@ -403,7 +403,7 @@ func setContainerVethSysctls(n *types.NetConf, containerVethLink netlink.Link) e
 	return nil
 }
 
-func setDummyGatewayAddressV4(n *types.NetConf, hostVethLink netlink.Link) error {
+func setDummyGatewayAddressV4(hostVethLink netlink.Link) error {
 	// Assign link-scoped dummy gateway address to the host veth. We need
 	// to do this because proxy_arp only replies when the target address is
 	// reachable. Since we have a blackhole default route in the VRF table,
@@ -484,7 +484,7 @@ func createVeth(n *types.NetConf, netns ns.NetNS, vrf *netlink.Vrf, ifName strin
 
 	// Set dummy gateway address for IPv4
 	if n.EnableIPv4 {
-		if err := setDummyGatewayAddressV4(n, hostVethLink); err != nil {
+		if err := setDummyGatewayAddressV4(hostVethLink); err != nil {
 			return nil, nil, fmt.Errorf("failed to assign IPv4 dummy gateway address: %w", err)
 		}
 	}
@@ -673,6 +673,20 @@ func ensureNFTRules(n *types.NetConf, vrf *netlink.Vrf) error {
 		Rule: knftables.Concat(
 			"ct zone set", vrf.Table,
 			"iif", vrf.Name,
+		),
+	})
+	chain = &knftables.Chain{
+		Name:     "raw-output",
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.OutputHook),
+		Priority: knftables.PtrTo(knftables.RawPriority),
+	}
+	tx.Add(chain)
+	tx.Add(&knftables.Rule{
+		Chain: chain.Name,
+		Rule: knftables.Concat(
+			"ct zone set", vrf.Table,
+			"oif", vrf.Name,
 		),
 	})
 
