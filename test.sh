@@ -1,6 +1,6 @@
 #!/bin/bash
 
-docker build --tag localhost/hostvrf-tester:local .
+docker build --tag localhost/hostvrf-tester:local ./images/tester
 
 pushd plugins/hostvrf
 
