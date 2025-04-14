@@ -1,4 +1,4 @@
-FROM golang:1.24.1-bookworm
+FROM golang:1.24.2-bookworm
 
 # Install dependencies
 RUN apt update && apt install -y iproute2 nftables
