@@ -11,7 +11,7 @@ require (
 	github.com/spf13/pflag v1.0.6
 	github.com/stretchr/testify v1.10.0
 	github.com/vishvananda/netlink v1.3.1-0.20250425193846-9d88d8385bf9
-	golang.org/x/sys v0.32.0
+	golang.org/x/sys v0.33.0
 	sigs.k8s.io/knftables v0.0.18
 )
 
