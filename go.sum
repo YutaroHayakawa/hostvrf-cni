@@ -8,6 +8,8 @@ github.com/cilium/hive v0.0.0-20250409150907-8eacab6fab5b h1:00k4EwXiIZ2J3cMt0xv
 github.com/cilium/hive v0.0.0-20250409150907-8eacab6fab5b/go.mod h1:3DSFWuYTjYtWkanf84uwMgDvP1pjJ313zXJxMfkz/Eg=
 github.com/cilium/hive v0.0.0-20250611195437-5a5dacdfb354 h1:4G9PC8nQw4pGW5wCMA0g8J8rK1l4C3owlceAOQggXzs=
 github.com/cilium/hive v0.0.0-20250611195437-5a5dacdfb354/go.mod h1:pI2GJ1n3SLKIQVFrKF7W6A6gb6BQkZ+3Hp4PAEo5SuI=
+github.com/cilium/hive v0.0.0-20250731144630-28e7a35ed227 h1:eeiPlekde25dlwsqv87HF9/BOEbf9uujC2dB1ucwywo=
+github.com/cilium/hive v0.0.0-20250731144630-28e7a35ed227/go.mod h1:6qtm9+eQD8D1SsqGFgNE63lNeys9PZswouh37X5ZhWU=
 github.com/containerd/errdefs v0.3.0 h1:FSZgGOeK4yuT/+DnF07/Olde/q4KBoMsaamhXxIMDp4=
 github.com/containerd/errdefs v0.3.0/go.mod h1:+YBYIdtsnF4Iw6nWZhJcqGSg/dwvV7tyJ/kCkyJ2k+M=
 github.com/containerd/errdefs/pkg v0.3.0 h1:9IKJ06FvyNlexW690DXuQNx2KA2cUJXx151Xdx3ZPPE=

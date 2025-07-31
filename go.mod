@@ -3,7 +3,7 @@ module github.com/YutaroHayakawa/hostvrf-cni
 go 1.23.2
 
 require (
-	github.com/cilium/hive v0.0.0-20250611195437-5a5dacdfb354
+	github.com/cilium/hive v0.0.0-20250731144630-28e7a35ed227
 	github.com/containernetworking/cni v1.3.0
 	github.com/containernetworking/plugins v1.7.1
 	github.com/docker/docker v28.3.2+incompatible
